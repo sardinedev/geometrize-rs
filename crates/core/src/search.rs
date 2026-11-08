@@ -25,8 +25,9 @@ pub(crate) struct SearchContext<'a> {
     pub target: &'a Canvas,
     /// The picture so far.
     pub current: &'a Canvas,
-    /// Difference between `target` and `current`.
-    pub score: f64,
+    /// Total error between `target` and `current` (see
+    /// [`crate::pixels::difference_full`]).
+    pub total: u64,
     /// Alpha every shape is drawn with (from the opacity).
     pub alpha: u8,
     /// Settings: shape kinds, seed, `candidates`, `age` and `climbs`.
@@ -47,6 +48,13 @@ impl SearchContext<'_> {
 
 /// Scratch memory for one search, reused between candidates so the hot loop
 /// doesn't allocate.
+///
+/// A fresh `Worker` is made for every search round rather than kept in the
+/// model, on purpose. That is at most `climbs` allocations per round (a step
+/// that retries runs a few rounds), next to roughly 17,000 shape evaluations
+/// per round with the default settings. So it doesn't show up in timings, and
+/// keeping workers alive across steps (one per rayon thread) would add code
+/// for no measurable gain.
 pub(crate) struct Worker {
     /// Canvas the candidate shapes are test-drawn on.
     buffer: Canvas,
@@ -63,14 +71,14 @@ impl Worker {
         }
     }
 
-    /// The score the picture would have if `shape` were added to it (lower is
-    /// better).
+    /// The total error the picture would have if `shape` were added to it
+    /// (lower is better).
     ///
     /// Port of `Worker.Energy`. The shape is drawn on the scratch buffer,
     /// which is first reset to `current` on the shape's scanlines only.
     /// Pixels outside those lines may hold leftovers from earlier candidates,
     /// but `difference_partial` never reads them.
-    fn energy(&mut self, ctx: &SearchContext, shape: &Shape) -> f64 {
+    fn energy(&mut self, ctx: &SearchContext, shape: &Shape) -> u64 {
         shape.rasterize(ctx.width(), ctx.height(), &mut self.lines);
         let color = compute_color(ctx.target, ctx.current, &self.lines, ctx.alpha);
         copy_lines(&mut self.buffer, ctx.current, &self.lines);
@@ -79,7 +87,7 @@ impl Worker {
             ctx.target,
             ctx.current,
             &self.buffer,
-            ctx.score,
+            ctx.total,
             &self.lines,
         )
     }
@@ -90,8 +98,8 @@ impl Worker {
 pub(crate) struct Candidate {
     /// The shape.
     pub shape: Shape,
-    /// Its energy (the score after adding it).
-    pub energy: f64,
+    /// Its energy: the total error after adding it.
+    pub energy: u64,
     /// Which search found it, used to break ties.
     pub search: u32,
 }
@@ -99,14 +107,14 @@ pub(crate) struct Candidate {
 /// Orders candidates best first: lower energy, then lower search index.
 fn compare(a: &Candidate, b: &Candidate) -> Ordering {
     a.energy
-        .total_cmp(&b.energy)
+        .cmp(&b.energy)
         .then_with(|| a.search.cmp(&b.search))
 }
 
 /// The best of `ctx.options.candidates` random shapes, with its energy.
 ///
 /// Port of `BestRandomState`.
-fn best_random(ctx: &SearchContext, worker: &mut Worker, rng: &mut Rng) -> (Shape, f64) {
+fn best_random(ctx: &SearchContext, worker: &mut Worker, rng: &mut Rng) -> (Shape, u64) {
     let mut best_shape = Shape::random_of(&ctx.options.shapes, ctx.width(), ctx.height(), rng);
     let mut best_energy = worker.energy(ctx, &best_shape);
     for _ in 1..ctx.options.candidates {
@@ -130,8 +138,8 @@ fn hill_climb(
     worker: &mut Worker,
     rng: &mut Rng,
     mut shape: Shape,
-    mut energy: f64,
-) -> (Shape, f64) {
+    mut energy: u64,
+) -> (Shape, u64) {
     let mut age = 0;
     while age < ctx.options.age {
         let previous = shape;

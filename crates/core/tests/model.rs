@@ -259,13 +259,24 @@ fn invalid_options_are_rejected() {
             height: 1
         })
     );
+    // The largest allowed size: its byte count only fits in a 64-bit usize,
+    // so on 32-bit targets (wasm32) it is rejected as too large instead.
+    let largest = Model::new(&[], 65_536, 65_536, base()).err();
+    #[cfg(target_pointer_width = "64")]
     assert_eq!(
-        Model::new(&[], 65_536, 65_536, base()).err(),
+        largest,
         Some(Error::BufferLength {
             expected: 65_536 * 65_536 * 4,
             actual: 0
-        }),
-        "the largest allowed size gets as far as the buffer check on 64-bit"
+        })
+    );
+    #[cfg(not(target_pointer_width = "64"))]
+    assert_eq!(
+        largest,
+        Some(Error::ImageTooLarge {
+            width: 65_536,
+            height: 65_536
+        })
     );
     assert_eq!(
         Model::new(&image, SIZE, SIZE - 1, base()).err(),

@@ -8,6 +8,12 @@
 //!
 //! There is no whitespace between elements and no trailing newline, so the
 //! model's running byte count is exactly the length of the finished file.
+//!
+//! The writer favours simple code over avoiding allocations: it builds small
+//! temporary strings (`format!`, `to_string`, the attributes of each shape)
+//! and measures a shape by writing it out. That's deliberate. Writing a whole
+//! 500-shape cover takes well under a millisecond, and measuring one shape
+//! per step is nothing next to the step's thousands of shape evaluations.
 
 use crate::Rgba;
 use crate::shape::Shape;
@@ -48,6 +54,12 @@ impl Frame {
 ///
 /// The `+ 0.5` moves to the pixel's centre; primitive did the same with a
 /// `translate(.5 .5)` on a group, here it's baked into the numbers.
+///
+/// Rounding to whole output units moves a vertex by at most half a unit.
+/// That's deliberate: with the default 1200-unit width and a ~256-pixel
+/// working image, half a unit is about a tenth of a working pixel. Only an
+/// output narrower than the working image would visibly differ from what was
+/// scored, and covers never use one.
 pub(crate) fn scale_coordinate(value: i32, scale: f64) -> i64 {
     ((f64::from(value) + 0.5) * scale).round() as i64
 }

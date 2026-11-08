@@ -6,6 +6,12 @@
 //!    `rasterize` and `write_svg`;
 //! 3. add a match arm to each method below.
 //!
+//! The one rule a new shape's `rasterize` must follow: **never cover the same
+//! pixel twice** (no overlapping scanlines). The partial error update in
+//! [`crate::pixels::difference_partial`] removes each covered pixel's old
+//! error once, so a pixel visited twice would corrupt the total. Give the new
+//! shape a test like `rows_are_unique_and_sorted_within_each_half` in `raster.rs`.
+//!
 //! The search, the model, the colour maths and the SVG writer only ever see
 //! [`Shape`], so nothing else changes. An enum (rather than a trait object)
 //! keeps the hot loop free of dynamic dispatch, and lets shapes be `Copy` so a
@@ -90,7 +96,8 @@ impl Shape {
     }
 
     /// Replaces `lines` with the scanlines this shape covers, cropped to a
-    /// `width × height` image.
+    /// `width × height` image. No pixel may appear in more than one line (see
+    /// the module docs).
     pub(crate) fn rasterize(&self, width: i32, height: i32, lines: &mut Vec<Scanline>) {
         lines.clear();
         match self {

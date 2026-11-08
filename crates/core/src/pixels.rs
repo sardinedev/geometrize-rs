@@ -188,58 +188,56 @@ fn pixel_error(a: Pixel, b: Pixel) -> u64 {
     sum
 }
 
-/// Turns a sum of squared channel differences into a score: the root-mean-
-/// square difference, scaled to `0.0..=1.0`.
-fn score_from_total(total: u64, canvas: &Canvas) -> f64 {
+/// Turns a total error (from [`difference_full`] or [`difference_partial`])
+/// into a score: the root-mean-square difference, scaled to `0.0..=1.0`.
+///
+/// primitive keeps only this float and converts it back to a total on every
+/// update. We keep the exact integer total instead and compute the score from
+/// it when it's shown, so no rounding error can build up from step to step.
+pub(crate) fn score_from_total(total: u64, canvas: &Canvas) -> f64 {
     (total as f64 / canvas.channel_count()).sqrt() / 255.0
 }
 
-/// Inverse of [`score_from_total`].
+/// Total error between two same-sized canvases: the sum of squared
+/// differences over every channel of every pixel. 0 means identical.
 ///
-/// Go truncates here. The exact value is a whole number, but after the round
-/// trip through `sqrt` it can come back as `…999.9999`, and truncating would
-/// lose 1 every step. Rounding recovers it exactly, so partial scores match a
-/// full recomputation.
-fn total_from_score(score: f64, canvas: &Canvas) -> u64 {
-    ((score * 255.0).powi(2) * canvas.channel_count()).round() as u64
-}
-
-/// Root-mean-square difference between two same-sized canvases, from 0
-/// (identical) to 1.
-///
-/// Port of `differenceFull`.
-pub(crate) fn difference_full(a: &Canvas, b: &Canvas) -> f64 {
+/// Port of `differenceFull`, returning the integer total rather than the
+/// score (see [`score_from_total`]).
+pub(crate) fn difference_full(a: &Canvas, b: &Canvas) -> u64 {
     let mut total: u64 = 0;
     for (&pa, &pb) in a.pixels.iter().zip(&b.pixels) {
         total += pixel_error(pa, pb);
     }
-    score_from_total(total, a)
+    total
 }
 
-/// Updates `score` (the difference between `target` and `before`) to the
-/// difference between `target` and `after`, where the two canvases differ only
-/// on `lines`.
+/// Updates `total` (the error between `target` and `before`) to the error
+/// between `target` and `after`, where the two canvases differ only on
+/// `lines`.
 ///
 /// Port of `differencePartial`. Only the pixels a shape touches can change the
-/// score, so instead of comparing the whole image again this removes those
+/// error, so instead of comparing the whole image again this removes those
 /// pixels' old error from the total and adds their new error. That makes
 /// trying a shape cost its own size, not the image size.
 pub(crate) fn difference_partial(
     target: &Canvas,
     before: &Canvas,
     after: &Canvas,
-    score: f64,
+    total: u64,
     lines: &[Scanline],
-) -> f64 {
-    let mut total = total_from_score(score, target);
+) -> u64 {
+    let mut total = total;
     for line in lines {
         for x in line.x1..=line.x2 {
             let i = target.index(x, line.y);
+            // Can't underflow: `total` includes exactly this pixel's old error,
+            // as long as no pixel appears in two lines (a rule every shape's
+            // rasteriser follows; see the `shape` module docs).
             total -= pixel_error(target.pixels[i], before.pixels[i]);
             total += pixel_error(target.pixels[i], after.pixels[i]);
         }
     }
-    score_from_total(total, target)
+    total
 }
 
 #[cfg(test)]
@@ -277,7 +275,7 @@ mod tests {
         let target = pattern(32, 32);
         let mut current = Canvas::filled(32, 32, Rgba::new(120, 80, 200, 255));
         let mut before = current.clone();
-        let mut score = difference_full(&target, &current);
+        let mut total = difference_full(&target, &current);
         let mut rng = Rng::new(5);
         let mut lines = Vec::new();
 
@@ -286,12 +284,9 @@ mod tests {
             let color = compute_color(&target, &current, &lines, 128);
             copy_lines(&mut before, &current, &lines);
             draw_lines(&mut current, color, &lines);
-            score = difference_partial(&target, &before, &current, score, &lines);
+            total = difference_partial(&target, &before, &current, total, &lines);
             let full = difference_full(&target, &current);
-            assert!(
-                (score - full).abs() < 1e-12,
-                "step {step}: partial {score} vs full {full}"
-            );
+            assert_eq!(total, full, "step {step}");
         }
     }
 
@@ -340,10 +335,11 @@ mod tests {
     #[test]
     fn identical_canvases_have_zero_difference() {
         let a = pattern(16, 16);
-        assert_eq!(difference_full(&a, &a), 0.0);
+        assert_eq!(difference_full(&a, &a), 0);
         let black = Canvas::filled(16, 16, Rgba::new(0, 0, 0, 0));
         let white = Canvas::filled(16, 16, Rgba::new(255, 255, 255, 255));
-        assert_eq!(difference_full(&black, &white), 1.0);
+        let total = difference_full(&black, &white);
+        assert_eq!(score_from_total(total, &black), 1.0);
     }
 
     #[test]

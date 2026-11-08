@@ -5,6 +5,7 @@
 
 use crate::pixels::{
     Canvas, compute_color, copy_lines, difference_full, difference_partial, draw_lines,
+    score_from_total,
 };
 use crate::raster::Scanline;
 use crate::search::{SearchContext, best_hill_climb};
@@ -17,6 +18,18 @@ use std::fmt;
 /// Largest supported image side, in pixels. Working images are a few hundred
 /// pixels, and this keeps all the `i32` coordinate maths far from overflowing.
 const MAX_SIDE: u32 = 1 << 16;
+
+/// How many searches in a row (each with fresh seeds) may fail to find a shape
+/// that improves the picture before [`Model::step`] gives up. One unlucky
+/// search with small settings shouldn't end a run; several in a row means the
+/// picture has stopped improving.
+///
+/// A fixed constant rather than an option, on purpose: there's no useful
+/// reason to tune it. The cost is that the step that gives up runs up to this
+/// many full searches, which happens at most once per run. Retries change
+/// which seeds later steps use, but deterministically, so the same seed still
+/// gives the same SVG.
+const MAX_FAILED_SEARCHES: u32 = 4;
 
 /// What one [`Model::step`] added.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -39,18 +52,31 @@ pub struct Model {
     /// The picture so far.
     current: Canvas,
     /// Scratch canvas holding `current` as it was before the last shape, on
-    /// that shape's scanlines only, for the partial score update.
+    /// that shape's scanlines only, for the partial error update.
+    ///
+    /// The search already computed the winner's colour and error, so `step`
+    /// could reuse those and drop this canvas. It deliberately redoes the work
+    /// for the one winning shape instead: that costs one shape evaluation
+    /// next to thousands per step, and keeps adding a shape self-contained.
     before: Canvas,
     /// Scratch scanlines for adding a shape.
     lines: Vec<Scanline>,
-    /// Difference between `target` and `current`.
-    score: f64,
+    /// Total error between `target` and `current` (see
+    /// [`crate::pixels::difference_full`]). Kept as an exact integer; the
+    /// 0–1 score is derived from it.
+    total: u64,
     /// Background colour.
     background: Rgba,
     /// `options.opacity` rounded to a whole percentage (1 to 100). Both the
     /// pixel maths and the SVG use this rounded value, so they always agree.
     opacity_percent: u8,
-    /// `opacity_percent` as an 8-bit alpha.
+    /// `opacity_percent` as an 8-bit alpha, worked out once in `new` and kept
+    /// next to it because the hot loop needs it on every evaluation.
+    ///
+    /// Blending is 8-bit, so this can't match the percentage exactly (50% is
+    /// 128/255 ≈ 50.2%). The drift is at most 0.2 percentage points. That is
+    /// accepted: writing the exact alpha would turn `.5` into `.502` on every
+    /// shape, about 1 KB more per cover.
     alpha: u8,
     /// Settings.
     options: Options,
@@ -58,7 +84,9 @@ pub struct Model {
     frame: Frame,
     /// Shapes added so far, with their colours.
     shapes: Vec<(Shape, Rgba)>,
-    /// Number of steps searched so far (seeds the next search).
+    /// Number of searches run so far, used to seed the next one. Usually equal
+    /// to the number of shapes, but a step that retries (see
+    /// [`MAX_FAILED_SEARCHES`]) uses more than one.
     step_index: u64,
     /// Current size of the SVG at `options.out_width`, in bytes.
     bytes: usize,
@@ -113,7 +141,7 @@ impl Model {
             ..background
         };
         let current = Canvas::filled(w, h, background);
-        let score = difference_full(&target, &current);
+        let total = difference_full(&target, &current);
 
         let frame = Frame::new(width, height, options.out_width);
         let bytes = svg::empty_len(frame, background);
@@ -131,7 +159,7 @@ impl Model {
             target,
             current,
             lines: Vec::new(),
-            score,
+            total,
             background,
             opacity_percent,
             alpha,
@@ -146,12 +174,18 @@ impl Model {
 
     /// Searches for the best next shape and adds it.
     ///
-    /// Returns `None`, without changing anything, once a limit in
-    /// [`Options::limit`] is reached. With a byte limit, the shape that would
-    /// have pushed the SVG past the limit is discarded, so the SVG never
-    /// exceeds it. It also returns `None` if even the best shape found
-    /// wouldn't improve the picture, so the score always goes down.
-    /// After the first `None`, every later call returns `None`.
+    /// Returns `None` and adds nothing when:
+    /// - the shape limit in [`Options::limit`] has been reached (checked
+    ///   before searching, so this is instant);
+    /// - the best shape found would push the SVG past the byte limit (it is
+    ///   discarded, so the SVG never exceeds the limit);
+    /// - several searches in a row, each with fresh seeds, found no shape that
+    ///   would lower the total error (so every added shape strictly lowers
+    ///   it; the 0–1 [`StepResult::score`] derived from it never goes up, but
+    ///   on very large images it can stay equal from one step to the next).
+    ///
+    /// In the last two cases the search time has already been spent. The
+    /// model is then finished: every later call returns `None` immediately.
     pub fn step(&mut self) -> Option<StepResult> {
         if self.done {
             return None;
@@ -163,30 +197,41 @@ impl Model {
             return None;
         }
 
-        let ctx = SearchContext {
-            target: &self.target,
-            current: &self.current,
-            score: self.score,
-            alpha: self.alpha,
-            options: &self.options,
-            step: self.step_index,
-        };
-        let best = best_hill_climb(&ctx);
-        self.step_index += 1;
-
-        // Adding a shape that doesn't lower the score would only waste bytes.
-        // This happens when the picture can't get any closer, for example a
-        // flat image that already matches its background.
-        if best.energy >= self.score {
+        // Adding a shape that doesn't lower the error would only waste bytes.
+        // If a search finds nothing better, try again with the next step's
+        // seeds; only give up once several searches in a row have failed
+        // (for example on a flat image that already matches its background).
+        let mut improving = None;
+        for _ in 0..MAX_FAILED_SEARCHES {
+            let ctx = SearchContext {
+                target: &self.target,
+                current: &self.current,
+                total: self.total,
+                alpha: self.alpha,
+                options: &self.options,
+                step: self.step_index,
+            };
+            let best = best_hill_climb(&ctx);
+            self.step_index += 1;
+            if best.energy < self.total {
+                improving = Some(best);
+                break;
+            }
+        }
+        let Some(best) = improving else {
             self.done = true;
             return None;
-        }
+        };
         let shape = best.shape;
 
         let (width, height) = (self.target.width as i32, self.target.height as i32);
         shape.rasterize(width, height, &mut self.lines);
         let color = compute_color(&self.target, &self.current, &self.lines, self.alpha);
 
+        // The first shape that doesn't fit ends the run, even though a smaller
+        // shape found later might still fit. That's deliberate: by then less
+        // than this one shape's length is left (a triangle is roughly 40 to 60
+        // bytes), so searching on would cost a lot of time for almost no gain.
         let added_bytes = svg::shape_len(self.frame, &shape, color, self.opacity_percent);
         if let Some(max_bytes) = self.options.limit.max_bytes()
             && self.bytes + added_bytes > max_bytes
@@ -197,12 +242,18 @@ impl Model {
 
         copy_lines(&mut self.before, &self.current, &self.lines);
         draw_lines(&mut self.current, color, &self.lines);
-        self.score = difference_partial(
+        self.total = difference_partial(
             &self.target,
             &self.before,
             &self.current,
-            self.score,
+            self.total,
             &self.lines,
+        );
+        // Recomputing the winner must agree exactly with what the search
+        // measured, or shapes would be chosen on numbers that aren't real.
+        debug_assert_eq!(
+            self.total, best.energy,
+            "the model and the search disagree on the winning shape's error"
         );
         self.shapes.push((shape, color));
         self.bytes += added_bytes;
@@ -210,7 +261,7 @@ impl Model {
         Some(StepResult {
             shape,
             color,
-            score: self.score,
+            score: self.score(),
             bytes: self.bytes,
         })
     }
@@ -218,7 +269,7 @@ impl Model {
     /// Current score: the root-mean-square difference between the target and
     /// the picture so far, from 0 (identical) to 1.
     pub fn score(&self) -> f64 {
-        self.score
+        score_from_total(self.total, &self.target)
     }
 
     /// The shapes added so far, oldest first, with their colours.
@@ -297,7 +348,7 @@ impl fmt::Debug for Model {
         f.debug_struct("Model")
             .field("width", &self.target.width)
             .field("height", &self.target.height)
-            .field("score", &self.score)
+            .field("score", &self.score())
             .field("shapes", &self.shapes.len())
             .field("bytes", &self.bytes)
             .field("background", &self.background)
