@@ -1,0 +1,16 @@
+[package]
+name = "geometrize-core"
+description = "Approximate images with semi-transparent triangles (a trimmed Rust port of fogleman/primitive)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+# Run the independent hill-climb searches of each step on rayon's thread pool.
+# Output is identical with or without this feature, whatever the thread count.
+parallel = ["dep:rayon"]
+
+[dependencies]
+rayon = { version = "1", optional = true }
