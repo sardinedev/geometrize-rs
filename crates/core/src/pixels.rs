@@ -1,8 +1,9 @@
 //! Canvases and the pixel maths: best colour, alpha blending and scoring.
 //!
 //! Integer-for-integer port of primitive's `core.go` (`computeColor`,
-//! `copyLines`, `drawLines`, `differenceFull`, `differencePartial`), so the
-//! results behave like primitive's.
+//! `drawLines`, `differenceFull`, `differencePartial`), so the results behave
+//! like primitive's. `copyLines` isn't needed: candidates are scored without
+//! drawing them (see [`difference_after_drawing`]).
 //!
 //! Two conventions from Go's `image/color` package show up throughout:
 //! - **16-bit colour.** Go widens an 8-bit channel `c` to 16 bits as
@@ -20,7 +21,7 @@ pub(crate) type Pixel = [u8; 4];
 /// An RGBA image, stored row by row.
 ///
 /// Deliberately not `Debug`: printing every pixel is never useful.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub(crate) struct Canvas {
     /// Width in pixels.
     pub width: usize,
@@ -60,6 +61,11 @@ impl Canvas {
     /// The pixels as flat RGBA bytes.
     pub(crate) fn as_rgba(&self) -> &[u8] {
         self.pixels.as_flattened()
+    }
+
+    /// Width and height as `i32`, the type shape coordinates use.
+    pub(crate) fn size(&self) -> (i32, i32) {
+        (self.width as i32, self.height as i32)
     }
 
     /// Index of pixel `(x, y)` in [`Canvas::pixels`]. The coordinates must be
@@ -127,53 +133,63 @@ pub(crate) fn compute_color(
     )
 }
 
-/// Copies the scanline pixels from `src` into `dst`. Both canvases must be the
-/// same size.
+/// The "source over" blend of one colour onto pixels:
+/// `result = dst·(1-α) + src·α`, done in Go's 16-bit premultiplied form.
 ///
-/// Port of `copyLines`. Used to reset just the part of a scratch canvas a
-/// shape is about to touch, instead of copying the whole image.
-pub(crate) fn copy_lines(dst: &mut Canvas, src: &Canvas, lines: &[Scanline]) {
-    for line in lines {
-        let row = src.index(line.x1, line.y)..=src.index(line.x2, line.y);
-        dst.pixels[row.clone()].copy_from_slice(&src.pixels[row]);
+/// Port of the per-pixel maths in `drawLines` (with full coverage). Built
+/// once per shape, then applied to each pixel it covers.
+struct Blend {
+    /// The source colour as 16-bit premultiplied values (R, G, B, A), the
+    /// same numbers Go's `color.NRGBA.RGBA()` returns.
+    src: [u32; 4],
+    /// How much of the destination survives, scaled so that
+    /// `dst (8-bit) * keep / 0xffff` comes out in 16 bits.
+    keep: u32,
+}
+
+impl Blend {
+    const MAX: u32 = 0xffff;
+
+    fn new(color: Rgba) -> Blend {
+        let alpha = u32::from(color.a);
+        let premultiply = |channel: u8| u32::from(channel) * 0x101 * alpha / 0xff;
+        let src_a = alpha * 0x101;
+        Blend {
+            src: [
+                premultiply(color.r),
+                premultiply(color.g),
+                premultiply(color.b),
+                src_a,
+            ],
+            keep: (Blend::MAX - src_a) * 0x101,
+        }
+    }
+
+    /// The pixel `dst` with the colour blended over it.
+    fn apply(&self, dst: Pixel) -> Pixel {
+        // This can't overflow u32: `dst * keep <= MAX * (MAX - src_a)` and
+        // `src * MAX <= src_a * MAX`, so the sum is at most `MAX * MAX`, which
+        // is below `u32::MAX`.
+        let channel =
+            |d: u8, s: u32| (((u32::from(d) * self.keep + s * Blend::MAX) / Blend::MAX) >> 8) as u8;
+        [
+            channel(dst[0], self.src[0]),
+            channel(dst[1], self.src[1]),
+            channel(dst[2], self.src[2]),
+            channel(dst[3], self.src[3]),
+        ]
     }
 }
 
 /// Alpha-blends `color` over the scanline pixels of `canvas`.
 ///
-/// Port of `drawLines` with full coverage, the "source over" blend
-/// `result = dst·(1-α) + src·α` done in Go's 16-bit premultiplied form.
+/// Port of `drawLines` with full coverage.
 pub(crate) fn draw_lines(canvas: &mut Canvas, color: Rgba, lines: &[Scanline]) {
-    const MAX: u32 = 0xffff;
-    let alpha = u32::from(color.a);
-
-    // The source colour as 16-bit premultiplied values, the same numbers Go's
-    // `color.NRGBA.RGBA()` returns.
-    let premultiply = |channel: u8| u32::from(channel) * 0x101 * alpha / 0xff;
-    let src_r = premultiply(color.r);
-    let src_g = premultiply(color.g);
-    let src_b = premultiply(color.b);
-    let src_a = alpha * 0x101;
-
-    // How much of the destination survives, scaled so that
-    // `dst (8-bit) * keep / MAX` comes out in 16 bits.
-    let keep = (MAX - src_a) * 0x101;
-
-    // This can't overflow u32: `dst * keep <= MAX * (MAX - src_a)` and
-    // `src * MAX <= src_a * MAX`, so the sum is at most `MAX * MAX`, which is
-    // below `u32::MAX`.
-    let blend = |dst: u8, src: u32| (((u32::from(dst) * keep + src * MAX) / MAX) >> 8) as u8;
-
+    let blend = Blend::new(color);
     for line in lines {
         for x in line.x1..=line.x2 {
             let i = canvas.index(x, line.y);
-            let [r, g, b, a] = canvas.pixels[i];
-            canvas.pixels[i] = [
-                blend(r, src_r),
-                blend(g, src_g),
-                blend(b, src_b),
-                blend(a, src_a),
-            ];
+            canvas.pixels[i] = blend.apply(canvas.pixels[i]);
         }
     }
 }
@@ -182,14 +198,15 @@ pub(crate) fn draw_lines(canvas: &mut Canvas, color: Rgba, lines: &[Scanline]) {
 fn pixel_error(a: Pixel, b: Pixel) -> u64 {
     let mut sum = 0;
     for (x, y) in a.into_iter().zip(b) {
-        let delta = i32::from(x) - i32::from(y);
-        sum += (delta * delta) as u64;
+        let delta = u64::from(x.abs_diff(y));
+        sum += delta * delta;
     }
     sum
 }
 
-/// Turns a total error (from [`difference_full`] or [`difference_partial`])
-/// into a score: the root-mean-square difference, scaled to `0.0..=1.0`.
+/// Turns a total error (from [`difference_full`] or
+/// [`difference_after_drawing`]) into a score: the root-mean-square
+/// difference, scaled to `0.0..=1.0`.
 ///
 /// primitive keeps only this float and converts it back to a total on every
 /// update. We keep the exact integer total instead and compute the score from
@@ -211,30 +228,36 @@ pub(crate) fn difference_full(a: &Canvas, b: &Canvas) -> u64 {
     total
 }
 
-/// Updates `total` (the error between `target` and `before`) to the error
-/// between `target` and `after`, where the two canvases differ only on
-/// `lines`.
+/// The total error `current` would have if `color` were drawn over `lines`,
+/// given its error now (`total`). `current` itself is left unchanged.
 ///
 /// Port of `differencePartial`. Only the pixels a shape touches can change the
 /// error, so instead of comparing the whole image again this removes those
-/// pixels' old error from the total and adds their new error. That makes
-/// trying a shape cost its own size, not the image size.
-pub(crate) fn difference_partial(
+/// pixels' old error from the total and adds the error they would have once
+/// blended. That makes trying a shape cost its own size, not the image size.
+///
+/// primitive draws each candidate on a scratch copy of the canvas and then
+/// compares the copy. Blending each pixel into a local value instead gives the
+/// same numbers without writing (and re-reading) a scratch canvas.
+pub(crate) fn difference_after_drawing(
     target: &Canvas,
-    before: &Canvas,
-    after: &Canvas,
+    current: &Canvas,
     total: u64,
+    color: Rgba,
     lines: &[Scanline],
 ) -> u64 {
+    let blend = Blend::new(color);
     let mut total = total;
     for line in lines {
         for x in line.x1..=line.x2 {
             let i = target.index(x, line.y);
+            let before = current.pixels[i];
+            let after = blend.apply(before);
             // Can't underflow: `total` includes exactly this pixel's old error,
             // as long as no pixel appears in two lines (a rule every shape's
             // rasteriser follows; see the `shape` module docs).
-            total -= pixel_error(target.pixels[i], before.pixels[i]);
-            total += pixel_error(target.pixels[i], after.pixels[i]);
+            total -= pixel_error(target.pixels[i], before);
+            total += pixel_error(target.pixels[i], after);
         }
     }
     total
@@ -243,15 +266,17 @@ pub(crate) fn difference_partial(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::raster::{crop_scanlines, rasterize_triangle};
+    use crate::raster::rasterize_triangle;
     use crate::rng::Rng;
+    use crate::shape::{Shape, Triangle};
 
     /// A canvas with a colourful but deterministic pattern.
     fn pattern(width: usize, height: usize) -> Canvas {
         let mut canvas = Canvas::filled(width, height, Rgba::new(0, 0, 0, 255));
         for y in 0..height {
             for x in 0..width {
-                canvas.pixels[y * width + x] = [
+                let i = canvas.index(x as i32, y as i32);
+                canvas.pixels[i] = [
                     (x * 255 / width) as u8,
                     (y * 255 / height) as u8,
                     ((x ^ y) * 8) as u8,
@@ -262,19 +287,18 @@ mod tests {
         canvas
     }
 
+    /// Scanlines of a random (not necessarily valid) triangle, which may
+    /// stick out of the image like real candidates do.
     fn random_lines(rng: &mut Rng, w: i32, h: i32, lines: &mut Vec<Scanline>) {
-        lines.clear();
         let mut coord = |n: i32| rng.below((n + 32) as u32) as i32 - 16;
-        let (x1, y1, x2, y2, x3, y3) = (coord(w), coord(h), coord(w), coord(h), coord(w), coord(h));
-        rasterize_triangle((x1, y1), (x2, y2), (x3, y3), lines);
-        crop_scanlines(lines, w, h);
+        let coords = [coord(w), coord(h), coord(w), coord(h), coord(w), coord(h)];
+        Shape::Triangle(Triangle::from_coords(coords)).rasterize(w, h, lines);
     }
 
     #[test]
-    fn partial_difference_matches_full_difference() {
+    fn predicted_difference_matches_drawing_and_comparing() {
         let target = pattern(32, 32);
         let mut current = Canvas::filled(32, 32, Rgba::new(120, 80, 200, 255));
-        let mut before = current.clone();
         let mut total = difference_full(&target, &current);
         let mut rng = Rng::new(5);
         let mut lines = Vec::new();
@@ -282,11 +306,9 @@ mod tests {
         for step in 0..100 {
             random_lines(&mut rng, 32, 32, &mut lines);
             let color = compute_color(&target, &current, &lines, 128);
-            copy_lines(&mut before, &current, &lines);
+            total = difference_after_drawing(&target, &current, total, color, &lines);
             draw_lines(&mut current, color, &lines);
-            total = difference_partial(&target, &before, &current, total, &lines);
-            let full = difference_full(&target, &current);
-            assert_eq!(total, full, "step {step}");
+            assert_eq!(total, difference_full(&target, &current), "step {step}");
         }
     }
 

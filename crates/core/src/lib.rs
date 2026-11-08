@@ -106,6 +106,18 @@ pub enum Limit {
 }
 
 impl Limit {
+    /// Builds a limit from an optional shape count and an optional byte size,
+    /// the way a command line or a form provides them. Returns `None` when
+    /// neither is given, so the caller can pick its own default.
+    pub fn from_parts(shapes: Option<u32>, bytes: Option<usize>) -> Option<Limit> {
+        match (shapes, bytes) {
+            (Some(shapes), Some(bytes)) => Some(Limit::Both { shapes, bytes }),
+            (Some(shapes), None) => Some(Limit::Shapes(shapes)),
+            (None, Some(bytes)) => Some(Limit::Bytes(bytes)),
+            (None, None) => None,
+        }
+    }
+
     /// The shape limit, if there is one.
     pub fn max_shapes(self) -> Option<u32> {
         match self {

@@ -9,7 +9,7 @@
 ///
 /// primitive's scanlines also carry a coverage alpha. Every shape here is fully
 /// opaque at its edges, so that field is dropped.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub(crate) struct Scanline {
     /// Row of the run.
     pub y: i32,
@@ -167,14 +167,19 @@ mod tests {
         assert!(rasterize([5, 40, 10, 47, 20, 45], 32, 32).is_empty());
     }
 
+    /// Checks that every line lies inside a `size × size` image.
+    fn assert_inside(lines: &[Scanline], size: i32) {
+        for line in lines {
+            assert!((0..size).contains(&line.y));
+            assert!(0 <= line.x1 && line.x1 <= line.x2 && line.x2 < size);
+        }
+    }
+
     #[test]
     fn partly_outside_triangle_stays_inside_the_image() {
         let lines = rasterize([-10, -10, 45, 5, 10, 45], 32, 32);
         assert!(!lines.is_empty());
-        for line in &lines {
-            assert!((0..32).contains(&line.y));
-            assert!(0 <= line.x1 && line.x1 <= line.x2 && line.x2 < 32);
-        }
+        assert_inside(&lines, 32);
     }
 
     #[test]
@@ -184,10 +189,7 @@ mod tests {
             [3, 7, 3, 7, 3, 7],
             [0, 4, 31, 4, 15, 4],
         ] {
-            for line in rasterize(t, 32, 32) {
-                assert!((0..32).contains(&line.y));
-                assert!(0 <= line.x1 && line.x1 <= line.x2 && line.x2 < 32);
-            }
+            assert_inside(&rasterize(t, 32, 32), 32);
         }
     }
 }

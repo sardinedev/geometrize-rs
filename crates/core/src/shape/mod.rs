@@ -1,14 +1,15 @@
 //! The shapes the optimiser can place.
 //!
 //! This module is the one place a new shape type gets wired in. To add one:
-//! 1. add a variant to [`ShapeKind`] and to [`Shape`];
+//! 1. add a variant to [`ShapeKind`] (and to [`ShapeKind::ALL`], which the
+//!    compiler can't check) and to [`Shape`];
 //! 2. write a file next to `triangle.rs` with `random`, `mutate`,
 //!    `rasterize` and `write_svg`;
 //! 3. add a match arm to each method below.
 //!
 //! The one rule a new shape's `rasterize` must follow: **never cover the same
 //! pixel twice** (no overlapping scanlines). The partial error update in
-//! [`crate::pixels::difference_partial`] removes each covered pixel's old
+//! [`crate::pixels::difference_after_drawing`] removes each covered pixel's old
 //! error once, so a pixel visited twice would corrupt the total. Give the new
 //! shape a test like `rows_are_unique_and_sorted_within_each_half` in `raster.rs`.
 //!

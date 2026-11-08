@@ -36,21 +36,21 @@ fn quick_options(limit: Limit) -> Options {
     }
 }
 
+/// A model of the synthetic image.
+fn new_model(options: Options) -> Model {
+    Model::new(&synthetic_image(), SIZE, SIZE, options).unwrap()
+}
+
+/// A model of the synthetic image, run until it stops.
 fn run(options: Options) -> Model {
-    let mut model = Model::new(&synthetic_image(), SIZE, SIZE, options).unwrap();
+    let mut model = new_model(options);
     while model.step().is_some() {}
     model
 }
 
 #[test]
 fn shape_limit_gives_exactly_that_many_shapes() {
-    let mut model = Model::new(
-        &synthetic_image(),
-        SIZE,
-        SIZE,
-        quick_options(Limit::Shapes(7)),
-    )
-    .unwrap();
+    let mut model = new_model(quick_options(Limit::Shapes(7)));
     for _ in 0..7 {
         assert!(model.step().is_some());
     }
@@ -62,13 +62,7 @@ fn shape_limit_gives_exactly_that_many_shapes() {
 #[test]
 fn byte_limit_is_never_exceeded() {
     let limit = 1500;
-    let mut model = Model::new(
-        &synthetic_image(),
-        SIZE,
-        SIZE,
-        quick_options(Limit::Bytes(limit)),
-    )
-    .unwrap();
+    let mut model = new_model(quick_options(Limit::Bytes(limit)));
     while let Some(step) = model.step() {
         assert_eq!(step.bytes, model.bytes());
         assert_eq!(model.bytes(), model.svg().len());
@@ -83,6 +77,20 @@ fn byte_limit_is_never_exceeded() {
         "stopped early at {} bytes",
         svg.len()
     );
+}
+
+#[test]
+fn limit_from_optional_values() {
+    assert_eq!(Limit::from_parts(Some(5), None), Some(Limit::Shapes(5)));
+    assert_eq!(Limit::from_parts(None, Some(900)), Some(Limit::Bytes(900)));
+    assert_eq!(
+        Limit::from_parts(Some(5), Some(900)),
+        Some(Limit::Both {
+            shapes: 5,
+            bytes: 900
+        })
+    );
+    assert_eq!(Limit::from_parts(None, None), None);
 }
 
 #[test]
@@ -132,13 +140,7 @@ fn thread_count_does_not_change_the_output() {
 
 #[test]
 fn every_shape_improves_the_score() {
-    let mut model = Model::new(
-        &synthetic_image(),
-        SIZE,
-        SIZE,
-        quick_options(Limit::Shapes(30)),
-    )
-    .unwrap();
+    let mut model = new_model(quick_options(Limit::Shapes(30)));
     let starting_score = model.score();
     let mut previous = starting_score;
     while let Some(step) = model.step() {
@@ -179,38 +181,32 @@ fn svg_structure_for_three_shapes() {
 }
 
 #[test]
-fn opacity_is_written_to_the_svg() {
-    let faint = run(Options {
-        opacity: 0.3,
-        ..quick_options(Limit::Shapes(2))
-    });
-    assert_eq!(faint.svg().matches("fill-opacity=\".3\"").count(), 2);
-    assert!(faint.shapes().iter().all(|(_, color)| color.a == 77));
-
-    let opaque = run(Options {
-        opacity: 1.0,
-        ..quick_options(Limit::Shapes(2))
-    });
-    assert!(!opaque.svg().contains("fill-opacity"));
-}
-
-#[test]
 fn opacity_is_rounded_once_for_both_maths_and_svg() {
-    // 0.996 rounds to 100%: drawn fully opaque, and no fill-opacity written.
-    let nearly_opaque = run(Options {
-        opacity: 0.996,
-        ..quick_options(Limit::Shapes(2))
-    });
-    assert!(!nearly_opaque.svg().contains("fill-opacity"));
-    assert!(nearly_opaque.shapes().iter().all(|(_, c)| c.a == 255));
-
-    // 0.333 rounds to 33%: fitted at alpha 84 (33% of 255), written as .33.
-    let third = run(Options {
-        opacity: 0.333,
-        ..quick_options(Limit::Shapes(2))
-    });
-    assert_eq!(third.svg().matches("fill-opacity=\".33\"").count(), 2);
-    assert!(third.shapes().iter().all(|(_, c)| c.a == 84));
+    // (opacity, fill-opacity written, alpha the colours are fitted at).
+    // 0.333 rounds to 33% (alpha 84 is 33% of 255); 0.996 rounds to 100%, so
+    // it's drawn fully opaque and no fill-opacity is written.
+    let cases = [
+        (0.3, Some(".3"), 77),
+        (0.333, Some(".33"), 84),
+        (0.996, None, 255),
+        (1.0, None, 255),
+    ];
+    for (opacity, written, alpha) in cases {
+        let model = run(Options {
+            opacity,
+            ..quick_options(Limit::Shapes(2))
+        });
+        let svg = model.svg();
+        match written {
+            Some(value) => {
+                let attribute = format!("fill-opacity=\"{value}\"");
+                assert_eq!(svg.matches(&attribute).count(), 2, "opacity {opacity}");
+            }
+            None => assert!(!svg.contains("fill-opacity"), "opacity {opacity}"),
+        }
+        let alphas: Vec<u8> = model.shapes().iter().map(|(_, color)| color.a).collect();
+        assert_eq!(alphas, [alpha, alpha], "opacity {opacity}");
+    }
 }
 
 #[test]

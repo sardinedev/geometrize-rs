@@ -10,7 +10,6 @@
 //! how many threads run the searches, or in which order they finish.
 
 /// Xoshiro256++ pseudo-random number generator.
-#[derive(Debug, Clone)]
 pub(crate) struct Rng {
     state: [u64; 4],
 }
@@ -25,6 +24,12 @@ fn splitmix64(state: &mut u64) -> u64 {
     z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     z ^ (z >> 31)
+}
+
+/// One SplitMix64 output for `value`: a well-mixed 64-bit hash of it.
+fn mix(value: u64) -> u64 {
+    let mut state = value;
+    splitmix64(&mut state)
 }
 
 impl Rng {
@@ -46,13 +51,10 @@ impl Rng {
     /// after the other, so every `(seed, step, search)` triple gets an
     /// unrelated stream.
     pub(crate) fn for_search(seed: u64, step: u64, search: u64) -> Rng {
-        let mut sm = seed;
-        let mut key = splitmix64(&mut sm);
-        sm = key ^ step;
-        key = splitmix64(&mut sm);
-        sm = key ^ search;
-        key = splitmix64(&mut sm);
-        Rng::new(key)
+        let seed_key = mix(seed);
+        let step_key = mix(seed_key ^ step);
+        let search_key = mix(step_key ^ search);
+        Rng::new(search_key)
     }
 
     /// Returns the next 64 random bits.
@@ -113,19 +115,17 @@ mod tests {
 
     #[test]
     fn different_search_coordinates_give_different_sequences() {
-        let first: Vec<u64> = {
-            let mut rng = Rng::for_search(1, 0, 0);
-            (0..8).map(|_| rng.next_u64()).collect()
-        };
-        for (step, search) in [(0, 1), (1, 0), (1, 1), (7, 3)] {
+        // The first 8 values of the stream for one (step, search) pair.
+        let stream = |step, search| {
             let mut rng = Rng::for_search(1, step, search);
-            let other: Vec<u64> = (0..8).map(|_| rng.next_u64()).collect();
-            assert_ne!(first, other, "step {step} search {search}");
+            (0..8).map(|_| rng.next_u64()).collect::<Vec<_>>()
+        };
+        let first = stream(0, 0);
+        for (step, search) in [(0, 1), (1, 0), (1, 1), (7, 3)] {
+            assert_ne!(first, stream(step, search), "step {step} search {search}");
         }
         // And the same triple always reproduces the same stream.
-        let mut again = Rng::for_search(1, 0, 0);
-        let repeat: Vec<u64> = (0..8).map(|_| again.next_u64()).collect();
-        assert_eq!(first, repeat);
+        assert_eq!(first, stream(0, 0));
     }
 
     #[test]

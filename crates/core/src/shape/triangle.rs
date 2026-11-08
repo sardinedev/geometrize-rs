@@ -109,6 +109,21 @@ impl Triangle {
     }
 }
 
+#[cfg(test)]
+impl Triangle {
+    /// Test shorthand: a triangle from `[x1, y1, x2, y2, x3, y3]`.
+    pub(crate) fn from_coords([x1, y1, x2, y2, x3, y3]: [i32; 6]) -> Triangle {
+        Triangle {
+            x1,
+            y1,
+            x2,
+            y2,
+            x3,
+            y3,
+        }
+    }
+}
+
 /// The angle, in degrees, at `vertex` between the edges to `a` and to `b`.
 fn angle_degrees(vertex: Point, a: Point, b: Point) -> f64 {
     let (ax, ay) = (f64::from(a.0 - vertex.0), f64::from(a.1 - vertex.1));
@@ -150,54 +165,19 @@ mod tests {
 
     #[test]
     fn validity_rejects_slivers_and_degenerates() {
-        let equilateral_ish = Triangle {
-            x1: 0,
-            y1: 0,
-            x2: 10,
-            y2: 0,
-            x3: 5,
-            y3: 9,
-        };
+        let equilateral_ish = Triangle::from_coords([0, 0, 10, 0, 5, 9]);
         assert!(equilateral_ish.is_valid());
-        let sliver = Triangle {
-            x1: 0,
-            y1: 0,
-            x2: 100,
-            y2: 0,
-            x3: 50,
-            y3: 2,
-        };
+        let sliver = Triangle::from_coords([0, 0, 100, 0, 50, 2]);
         assert!(!sliver.is_valid());
-        let point = Triangle {
-            x1: 3,
-            y1: 3,
-            x2: 3,
-            y2: 3,
-            x3: 3,
-            y3: 3,
-        };
+        let point = Triangle::from_coords([3, 3, 3, 3, 3, 3]);
         assert!(!point.is_valid());
-        let line = Triangle {
-            x1: 0,
-            y1: 0,
-            x2: 5,
-            y2: 5,
-            x3: 10,
-            y3: 10,
-        };
+        let line = Triangle::from_coords([0, 0, 5, 5, 10, 10]);
         assert!(!line.is_valid());
     }
 
     #[test]
     fn svg_coordinates_are_scaled_and_compact() {
-        let t = Triangle {
-            x1: 0,
-            y1: 1,
-            x2: 9,
-            y2: -3,
-            x3: -16,
-            y3: 4,
-        };
+        let t = Triangle::from_coords([0, 1, 9, -3, -16, 4]);
         let mut out = String::new();
         t.write_svg(&mut out, 2.0, "fill=\"#abc\"");
         // (v + 0.5) * 2 → 1 3 19 -5 -31 9, with no space before negatives.

@@ -25,7 +25,7 @@ const HEADER_START: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"
 const FOOTER: &str = "</svg>";
 
 /// Size and scale of an SVG drawn from a working image.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Clone, Copy)]
 pub(crate) struct Frame {
     /// Output width (viewBox units).
     pub width: u32,
@@ -50,7 +50,11 @@ impl Frame {
     }
 }
 
-/// Maps a working-image pixel coordinate to output units.
+/// Maps a working-image pixel *position* to output units.
+///
+/// Only for positions (vertices, centres): the half-pixel offset below would
+/// be wrong for lengths such as a future ellipse's radii, which only need
+/// `value * scale`.
 ///
 /// The `+ 0.5` moves to the pixel's centre; primitive did the same with a
 /// `translate(.5 .5)` on a group, here it's baked into the numbers.
@@ -77,7 +81,7 @@ pub(crate) fn push_numbers(out: &mut String, numbers: &[i64]) {
 
 /// Formats a colour as `#rrggbb`, or as `#rgb` when each channel's two hex
 /// digits are the same (`#ffffff` → `#fff`). Alpha is ignored.
-pub(crate) fn hex_color(color: Rgba) -> String {
+fn hex_color(color: Rgba) -> String {
     let channels = [color.r, color.g, color.b];
     let shortenable = channels.iter().all(|c| c >> 4 == c & 0xf);
     if shortenable {
@@ -95,7 +99,7 @@ pub(crate) fn hex_color(color: Rgba) -> String {
 /// # Panics
 /// Panics if `percent` is 0 or above 100, which [`crate::Model::new`] rules
 /// out. (0 would produce the invalid value `.`.)
-pub(crate) fn format_opacity(percent: u8) -> Option<String> {
+fn format_opacity(percent: u8) -> Option<String> {
     assert!(
         (1..=100).contains(&percent),
         "opacity percentage {percent} out of range"
@@ -109,7 +113,7 @@ pub(crate) fn format_opacity(percent: u8) -> Option<String> {
 
 /// The presentation attributes of a shape: `fill="#…"`, plus
 /// `fill-opacity="…"` unless the opacity is 100%.
-pub(crate) fn fill_attributes(color: Rgba, opacity_percent: u8) -> String {
+fn fill_attributes(color: Rgba, opacity_percent: u8) -> String {
     let mut attrs = format!("fill=\"{}\"", hex_color(color));
     if let Some(value) = format_opacity(opacity_percent) {
         attrs.push_str(&format!(" fill-opacity=\"{value}\""));
@@ -213,25 +217,11 @@ mod tests {
         let background = Rgba::new(10, 20, 30, 255);
         let shapes = [
             (
-                Shape::Triangle(Triangle {
-                    x1: 0,
-                    y1: 0,
-                    x2: 10,
-                    y2: 0,
-                    x3: 5,
-                    y3: 9,
-                }),
+                Shape::Triangle(Triangle::from_coords([0, 0, 10, 0, 5, 9])),
                 Rgba::new(1, 2, 3, 128),
             ),
             (
-                Shape::Triangle(Triangle {
-                    x1: -5,
-                    y1: 3,
-                    x2: 30,
-                    y2: 12,
-                    x3: 8,
-                    y3: 40,
-                }),
+                Shape::Triangle(Triangle::from_coords([-5, 3, 30, 12, 8, 40])),
                 Rgba::new(255, 255, 255, 128),
             ),
         ];

@@ -11,10 +11,8 @@
 //! winner is the same whether the searches run one after another or spread
 //! across any number of threads.
 
-use std::cmp::Ordering;
-
 use crate::Options;
-use crate::pixels::{Canvas, compute_color, copy_lines, difference_partial, draw_lines};
+use crate::pixels::{Canvas, compute_color, difference_after_drawing};
 use crate::raster::Scanline;
 use crate::rng::Rng;
 use crate::shape::Shape;
@@ -37,64 +35,26 @@ pub(crate) struct SearchContext<'a> {
 }
 
 impl SearchContext<'_> {
-    fn width(&self) -> i32 {
-        self.target.width as i32
-    }
-
-    fn height(&self) -> i32 {
-        self.target.height as i32
-    }
-}
-
-/// Scratch memory for one search, reused between candidates so the hot loop
-/// doesn't allocate.
-///
-/// A fresh `Worker` is made for every search round rather than kept in the
-/// model, on purpose. That is at most `climbs` allocations per round (a step
-/// that retries runs a few rounds), next to roughly 17,000 shape evaluations
-/// per round with the default settings. So it doesn't show up in timings, and
-/// keeping workers alive across steps (one per rayon thread) would add code
-/// for no measurable gain.
-pub(crate) struct Worker {
-    /// Canvas the candidate shapes are test-drawn on.
-    buffer: Canvas,
-    /// Scanlines of the shape being evaluated.
-    lines: Vec<Scanline>,
-}
-
-impl Worker {
-    /// Creates scratch memory for a `width × height` image.
-    pub(crate) fn new(width: usize, height: usize) -> Worker {
-        Worker {
-            buffer: Canvas::filled(width, height, crate::Rgba::new(0, 0, 0, 0)),
-            lines: Vec::new(),
-        }
-    }
-
     /// The total error the picture would have if `shape` were added to it
     /// (lower is better).
     ///
-    /// Port of `Worker.Energy`. The shape is drawn on the scratch buffer,
-    /// which is first reset to `current` on the shape's scanlines only.
-    /// Pixels outside those lines may hold leftovers from earlier candidates,
-    /// but `difference_partial` never reads them.
-    fn energy(&mut self, ctx: &SearchContext, shape: &Shape) -> u64 {
-        shape.rasterize(ctx.width(), ctx.height(), &mut self.lines);
-        let color = compute_color(ctx.target, ctx.current, &self.lines, ctx.alpha);
-        copy_lines(&mut self.buffer, ctx.current, &self.lines);
-        draw_lines(&mut self.buffer, color, &self.lines);
-        difference_partial(
-            ctx.target,
-            ctx.current,
-            &self.buffer,
-            ctx.total,
-            &self.lines,
-        )
+    /// Port of `Worker.Energy`. `lines` is scratch space for the shape's
+    /// scanlines, reused between candidates so the hot loop doesn't allocate.
+    fn energy(&self, shape: &Shape, lines: &mut Vec<Scanline>) -> u64 {
+        let (width, height) = self.target.size();
+        shape.rasterize(width, height, lines);
+        let color = compute_color(self.target, self.current, lines, self.alpha);
+        difference_after_drawing(self.target, self.current, self.total, color, lines)
+    }
+
+    /// A random shape of one of the configured kinds.
+    fn random_shape(&self, rng: &mut Rng) -> Shape {
+        let (width, height) = self.target.size();
+        Shape::random_of(&self.options.shapes, width, height, rng)
     }
 }
 
 /// The best shape one search found.
-#[derive(Debug, Clone, Copy)]
 pub(crate) struct Candidate {
     /// The shape.
     pub shape: Shape,
@@ -104,22 +64,22 @@ pub(crate) struct Candidate {
     pub search: u32,
 }
 
-/// Orders candidates best first: lower energy, then lower search index.
-fn compare(a: &Candidate, b: &Candidate) -> Ordering {
-    a.energy
-        .cmp(&b.energy)
-        .then_with(|| a.search.cmp(&b.search))
+impl Candidate {
+    /// Sort key, best first: lower energy, then lower search index.
+    fn rank(&self) -> (u64, u32) {
+        (self.energy, self.search)
+    }
 }
 
 /// The best of `ctx.options.candidates` random shapes, with its energy.
 ///
 /// Port of `BestRandomState`.
-fn best_random(ctx: &SearchContext, worker: &mut Worker, rng: &mut Rng) -> (Shape, u64) {
-    let mut best_shape = Shape::random_of(&ctx.options.shapes, ctx.width(), ctx.height(), rng);
-    let mut best_energy = worker.energy(ctx, &best_shape);
+fn best_random(ctx: &SearchContext, lines: &mut Vec<Scanline>, rng: &mut Rng) -> (Shape, u64) {
+    let mut best_shape = ctx.random_shape(rng);
+    let mut best_energy = ctx.energy(&best_shape, lines);
     for _ in 1..ctx.options.candidates {
-        let shape = Shape::random_of(&ctx.options.shapes, ctx.width(), ctx.height(), rng);
-        let energy = worker.energy(ctx, &shape);
+        let shape = ctx.random_shape(rng);
+        let energy = ctx.energy(&shape, lines);
         if energy < best_energy {
             best_shape = shape;
             best_energy = energy;
@@ -135,16 +95,17 @@ fn best_random(ctx: &SearchContext, worker: &mut Worker, rng: &mut Rng) -> (Shap
 /// putting the previous value back.
 fn hill_climb(
     ctx: &SearchContext,
-    worker: &mut Worker,
+    lines: &mut Vec<Scanline>,
     rng: &mut Rng,
     mut shape: Shape,
     mut energy: u64,
 ) -> (Shape, u64) {
+    let (width, height) = ctx.target.size();
     let mut age = 0;
     while age < ctx.options.age {
         let previous = shape;
-        shape.mutate(ctx.width(), ctx.height(), rng);
-        let new_energy = worker.energy(ctx, &shape);
+        shape.mutate(width, height, rng);
+        let new_energy = ctx.energy(&shape, lines);
         if new_energy < energy {
             energy = new_energy;
             age = 0;
@@ -157,10 +118,10 @@ fn hill_climb(
 }
 
 /// Runs search number `search`: random search, then hill climbing.
-fn run_search(ctx: &SearchContext, worker: &mut Worker, search: u32) -> Candidate {
+fn run_search(ctx: &SearchContext, lines: &mut Vec<Scanline>, search: u32) -> Candidate {
     let mut rng = Rng::for_search(ctx.options.seed, ctx.step, u64::from(search));
-    let (shape, energy) = best_random(ctx, worker, &mut rng);
-    let (shape, energy) = hill_climb(ctx, worker, &mut rng, shape, energy);
+    let (shape, energy) = best_random(ctx, lines, &mut rng);
+    let (shape, energy) = hill_climb(ctx, lines, &mut rng, shape, energy);
     Candidate {
         shape,
         energy,
@@ -182,24 +143,21 @@ pub(crate) fn best_hill_climb(ctx: &SearchContext) -> Candidate {
 }
 
 /// Runs the searches on rayon's thread pool, each thread with its own
-/// [`Worker`].
+/// scanline buffer.
 #[cfg(feature = "parallel")]
 fn run_searches_in_parallel(ctx: &SearchContext) -> Option<Candidate> {
     use rayon::prelude::*;
     (0..ctx.options.climbs)
         .into_par_iter()
-        .map_init(
-            || Worker::new(ctx.target.width, ctx.target.height),
-            |worker, search| run_search(ctx, worker, search),
-        )
-        .min_by(compare)
+        .map_init(Vec::new, |lines, search| run_search(ctx, lines, search))
+        .min_by_key(Candidate::rank)
 }
 
-/// Runs the searches one after another with a single [`Worker`].
+/// Runs the searches one after another, sharing one scanline buffer.
 #[cfg(not(feature = "parallel"))]
 fn run_searches_in_sequence(ctx: &SearchContext) -> Option<Candidate> {
-    let mut worker = Worker::new(ctx.target.width, ctx.target.height);
+    let mut lines = Vec::new();
     (0..ctx.options.climbs)
-        .map(|search| run_search(ctx, &mut worker, search))
-        .min_by(compare)
+        .map(|search| run_search(ctx, &mut lines, search))
+        .min_by_key(Candidate::rank)
 }

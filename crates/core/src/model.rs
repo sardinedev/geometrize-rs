@@ -4,8 +4,7 @@
 //! `repeat` loop and the PNG/GIF output, and with a stop condition on SVG size.
 
 use crate::pixels::{
-    Canvas, compute_color, copy_lines, difference_full, difference_partial, draw_lines,
-    score_from_total,
+    Canvas, compute_color, difference_after_drawing, difference_full, draw_lines, score_from_total,
 };
 use crate::raster::Scanline;
 use crate::search::{SearchContext, best_hill_climb};
@@ -51,14 +50,6 @@ pub struct Model {
     target: Canvas,
     /// The picture so far.
     current: Canvas,
-    /// Scratch canvas holding `current` as it was before the last shape, on
-    /// that shape's scanlines only, for the partial error update.
-    ///
-    /// The search already computed the winner's colour and error, so `step`
-    /// could reuse those and drop this canvas. It deliberately redoes the work
-    /// for the one winning shape instead: that costs one shape evaluation
-    /// next to thousands per step, and keeps adding a shape self-contained.
-    before: Canvas,
     /// Scratch scanlines for adding a shape.
     lines: Vec<Scanline>,
     /// Total error between `target` and `current` (see
@@ -155,7 +146,6 @@ impl Model {
         }
 
         Ok(Model {
-            before: current.clone(),
             target,
             current,
             lines: Vec::new(),
@@ -224,7 +214,13 @@ impl Model {
         };
         let shape = best.shape;
 
-        let (width, height) = (self.target.width as i32, self.target.height as i32);
+        // The search already worked out this shape's colour and error. They
+        // are recomputed here on purpose (and the shape's pixels are blended
+        // twice: once to predict the error, once to draw): it's one shape
+        // next to thousands of evaluations per step, and it keeps adding a
+        // shape self-contained. The debug assertion below checks that the
+        // recomputed error matches the search's.
+        let (width, height) = self.target.size();
         shape.rasterize(width, height, &mut self.lines);
         let color = compute_color(&self.target, &self.current, &self.lines, self.alpha);
 
@@ -240,15 +236,9 @@ impl Model {
             return None;
         }
 
-        copy_lines(&mut self.before, &self.current, &self.lines);
+        self.total =
+            difference_after_drawing(&self.target, &self.current, self.total, color, &self.lines);
         draw_lines(&mut self.current, color, &self.lines);
-        self.total = difference_partial(
-            &self.target,
-            &self.before,
-            &self.current,
-            self.total,
-            &self.lines,
-        );
         // Recomputing the winner must agree exactly with what the search
         // measured, or shapes would be chosen on numbers that aren't real.
         debug_assert_eq!(
