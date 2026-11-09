@@ -1,5 +1,7 @@
 # geometrize-rs
 
+[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://app.codspeed.io/sardinedev/geometrize-rs?utm_source=badge)
+
 Turn a photo into a compact SVG of semi-transparent triangles.
 
 This is a trimmed Rust port of [fogleman/primitive](https://github.com/fogleman/primitive), the algorithm behind [geometrize](https://github.com/Tw1ddle/geometrize). It's built for one job: making [marabyte.com](https://marabyte.com) cover images. It keeps primitive's core algorithm, adds a stop condition on output size, and is meant to run both as a CLI and in the browser through WebAssembly.
@@ -82,6 +84,9 @@ cargo test --workspace
 cargo test -p geometrize-core --features parallel
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
+
+# Benchmarks (divan, also run by CodSpeed in CI)
+cargo bench -p geometrize-core
 
 # Writes /tmp/core.svg (300 shapes on a synthetic image) for a visual check
 cargo test -p geometrize-core --release --features parallel -- --ignored
