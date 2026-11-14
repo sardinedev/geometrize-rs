@@ -3,9 +3,11 @@
 //! Run them with `cargo bench -p geometrize-core`, or through CodSpeed with
 //! `cargo codspeed build -p geometrize-core && cargo codspeed run`.
 //!
-//! The image is a synthetic 128×85 "sun in the sky" picture, about half the
-//! usual working size, and the search settings are scaled down so a single
-//! iteration stays in the millisecond range.
+//! Most benchmarks use a synthetic 128×85 "sun in the sky" picture, about
+//! half the usual working size, and the search settings are scaled down so a
+//! single iteration stays in the millisecond range. The `photo_` benchmarks
+//! run the same workload on a real photo (`fixtures/big_ben.jpg`, shrunk to
+//! 128 pixels on its long side), which has far more detail to find.
 
 use divan::{Bencher, black_box};
 use geometrize_core::{Limit, Model, Options};
@@ -133,4 +135,42 @@ fn svg_100_shapes(bencher: Bencher) {
 fn svg_at_100_shapes(bencher: Bencher) {
     let model = model_with_shapes(100);
     bencher.bench_local(|| black_box(&model).svg_at(black_box(640)));
+}
+
+/// The real photo in `fixtures/` (see `fixtures/README.md`), shrunk to 128
+/// pixels on its long side like the synthetic image, as RGBA bytes plus its
+/// width and height.
+fn photo() -> (Vec<u8>, u32, u32) {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/big_ben.jpg");
+    let image = image::open(path)
+        .expect("fixtures/big_ben.jpg decodes")
+        .thumbnail(128, 128)
+        .to_rgba8();
+    let (width, height) = image.dimensions();
+    (image.into_raw(), width, height)
+}
+
+/// A model of the real photo.
+fn photo_model(limit: Limit) -> Model {
+    let (rgba, width, height) = photo();
+    Model::new(&rgba, width, height, options(limit)).unwrap()
+}
+
+/// One full step on a fresh model of the real photo.
+#[divan::bench]
+fn photo_first_step(bencher: Bencher) {
+    bencher
+        .with_inputs(|| photo_model(Limit::Shapes(1)))
+        .bench_local_refs(|model| black_box(model.step()));
+}
+
+/// A complete 25-shape run on the real photo.
+#[divan::bench]
+fn photo_run_to_25_shapes(bencher: Bencher) {
+    bencher
+        .with_inputs(|| photo_model(Limit::Shapes(25)))
+        .bench_local_values(|mut model| {
+            while model.step().is_some() {}
+            black_box(model.bytes())
+        });
 }

@@ -311,7 +311,7 @@ impl Model {
 }
 
 /// Checks the options and returns the opacity as a whole percentage.
-fn validate_options(options: &Options) -> Result<u8, Error> {
+pub(crate) fn validate_options(options: &Options) -> Result<u8, Error> {
     // `contains` is false for NaN, so NaN is rejected too.
     if !(0.01..=1.0).contains(&options.opacity) {
         return Err(Error::Opacity(options.opacity));

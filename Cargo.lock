@@ -292,6 +292,7 @@ name = "geometrize-core"
 version = "0.1.0"
 dependencies = [
  "codspeed-divan-compat",
+ "image",
  "rayon",
 ]
 

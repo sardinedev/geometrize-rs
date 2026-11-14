@@ -53,25 +53,25 @@ geometrize -i photo.jpg -o cover.svg --max-size 30k
 # done: 430 shapes, score 0.0410, 29960 bytes in … s -> cover.svg
 ```
 
-It reads JPEG and PNG, turns phone photos upright, and shrinks the photo to 256 pixels on its long side before searching. Without `--seed` it picks one and prints it, so you can make the same file again. Progress goes to stderr, and `-o -` writes the SVG to stdout.
+It reads JPEG and PNG, turns phone photos upright, blends transparent pixels onto the background, and shrinks the photo to 256 pixels on its long side before searching. Without `--seed` it picks one and prints it, so you can make the same file again. Progress goes to stderr, and `-o -` writes the SVG to stdout.
 
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `-i, --input <file>` | required | JPEG or PNG photo to read |
 | `-o, --output <file>` | required | SVG file to write, or `-` for stdout |
-| `-n, --shapes <n>` | 500 | Stop after n shapes |
+| `-n, --shapes <n>` | 500 (see below) | Stop after n shapes |
 | `--max-size <size>` | none | Keep the SVG at or under this size: `30000`, `30k`, `1.5m` (k = 1000 bytes) |
 | `--opacity <0.01-1>` | 0.5 | Opacity of every shape |
 | `--shape <kind>` | `triangle` | Shape to use; repeat for several (only `triangle` for now) |
 | `--width <px>` | 1200 | Width of the SVG's viewBox |
-| `--bg <rrggbb>` | photo's average | Background colour (`ff8800`, `#ff8800` or `#f80`) |
+| `--bg <rrggbb>` | photo's average | Background colour: `ff8800` or `f80` (quote a leading `#` in a shell: `'#f80'`). Transparent pixels are blended onto it, or onto white |
 | `--seed <n>` | from the clock | Random seed; the same seed gives the same SVG |
 | `--work-size <px>` | 256 | Long side of the photo while searching |
 | `--candidates`, `--age`, `--climbs` | 1000, 100, 16 | Search settings (see [Options](#options)) |
 | `-j, --threads <n>` | all cores | Threads to use |
 | `-q, --quiet` | off | Print nothing except errors |
 
-With both `-n` and `--max-size`, it stops at whichever comes first. `geometrize --help` prints the same list.
+With neither `-n` nor `--max-size`, it stops at 500 shapes. With only `--max-size`, there's no shape limit. With both, it stops at whichever comes first. `geometrize --help` prints the same list.
 
 ---
 

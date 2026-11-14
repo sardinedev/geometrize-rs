@@ -165,6 +165,22 @@ pub struct Options {
     pub climbs: u32,
 }
 
+impl Options {
+    /// Checks the settings that don't depend on the image: opacity range,
+    /// at least one shape kind, and no zero search settings or output width.
+    ///
+    /// [`Model::new`] runs the same checks (plus the image-dependent ones),
+    /// so calling this is optional. It lets a caller reject bad settings
+    /// before doing expensive work such as decoding a large photo.
+    ///
+    /// # Errors
+    /// Returns the first problem found, as the same [`Error`] that
+    /// [`Model::new`] would return.
+    pub fn validate(&self) -> Result<(), Error> {
+        model::validate_options(self).map(|_percent| ())
+    }
+}
+
 impl Default for Options {
     fn default() -> Options {
         Options {

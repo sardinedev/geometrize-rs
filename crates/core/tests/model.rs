@@ -242,6 +242,21 @@ fn background_defaults_to_average_and_can_be_set() {
 }
 
 #[test]
+fn options_can_be_checked_before_making_a_model() {
+    assert_eq!(Options::default().validate(), Ok(()));
+    let bad = Options {
+        opacity: 2.0,
+        ..Options::default()
+    };
+    assert_eq!(bad.validate(), Err(Error::Opacity(2.0)));
+    // Model::new reports the same error.
+    assert_eq!(
+        Model::new(&synthetic_image(), SIZE, SIZE, bad).err(),
+        Some(Error::Opacity(2.0))
+    );
+}
+
+#[test]
 fn invalid_options_are_rejected() {
     let image = synthetic_image();
     let new = |options: Options| Model::new(&image, SIZE, SIZE, options).err();
