@@ -1,5 +1,7 @@
 # geometrize-rs
 
+[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://app.codspeed.io/sardinedev/geometrize-rs?utm_source=badge)
+
 Turn a photo into a small, stylised SVG built from a few hundred semi-transparent triangles, which makes good cover images and placeholders. You set the **maximum file size**, and the same seed always gives the **exact same file**. It's a Rust port of [fogleman/primitive](https://github.com/fogleman/primitive), trimmed down to triangles and SVG, with a core that has no dependencies so it can run on the command line and in the browser.
 
 - **Size budget.** Stop at a number of shapes, a maximum SVG size in bytes, or whichever comes first. The SVG never goes over the byte limit.
@@ -156,6 +158,9 @@ cargo test -p geometrize-core --features parallel
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
 
+# Benchmarks (divan, also run by CodSpeed in CI)
+cargo bench -p geometrize-core
+
 # Writes /tmp/core.svg (300 triangles on a synthetic image) for a visual check
 cargo test -p geometrize-core --release --features parallel -- --ignored
 ```
@@ -164,4 +169,4 @@ cargo test -p geometrize-core --release --features parallel -- --ignored
 
 ## Licence
 
-MIT. Based on [primitive](https://github.com/fogleman/primitive) by Michael Fogleman, also MIT. See [LICENSE](LICENSE).
+MIT. Based on [primitive](https://github.com/fogleman/primitive), © 2016 Michael Fogleman, also MIT. See [LICENSE](LICENSE).
