@@ -190,17 +190,20 @@ fn load_image(path: &Path, work_size: u32, background: Rgba) -> Result<RgbaImage
 
     // Blend away transparency *before* shrinking. Shrinking averages each
     // channel separately, so transparent pixels (usually stored as black)
-    // would otherwise darken the edges next to them.
-    let mut rgba = image.to_rgba8();
-    flatten_onto(&mut rgba, background);
+    // would otherwise darken the edges next to them. Only images with an
+    // alpha channel (PNGs, in practice) need this; JPEGs skip a full-size
+    // copy and loop that would change nothing.
+    if image.color().has_alpha() {
+        let mut rgba = image.to_rgba8();
+        flatten_onto(&mut rgba, background);
+        image = DynamicImage::ImageRgba8(rgba);
+    }
 
     // Only ever shrink: enlarging a small photo adds no detail, just time.
-    if rgba.width().max(rgba.height()) > work_size {
-        rgba = DynamicImage::ImageRgba8(rgba)
-            .thumbnail(work_size, work_size)
-            .to_rgba8();
+    if image.width().max(image.height()) > work_size {
+        image = image.thumbnail(work_size, work_size);
     }
-    Ok(rgba)
+    Ok(image.to_rgba8())
 }
 
 /// Blends every partly or fully transparent pixel onto `background`, making
