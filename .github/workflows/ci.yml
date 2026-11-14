@@ -33,3 +33,9 @@ jobs:
 
       - name: Run tests
         run: cargo test --workspace
+
+      # The CLI turns on the core's `parallel` feature for the whole workspace
+      # build above. Testing the core on its own builds it without `parallel`,
+      # which is the single-threaded path the WebAssembly build uses.
+      - name: Run core tests without the parallel feature
+        run: cargo test -p geometrize-core

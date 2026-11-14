@@ -22,11 +22,12 @@ std::fs::write("cover.svg", model.svg())?;
 //   <path fill="#00003b" fill-opacity=".5" d="M645 391 1198 874 1198-73z"/>…</svg>
 ```
 
-> **Status:** the core library works and is tested. The `geometrize` command-line tool, the WebAssembly build and a browser preview page are next. Nothing is published on crates.io yet.
+> **Status:** the core library and the `geometrize` command-line tool work and are tested. The WebAssembly build and a browser preview page are next. Nothing is published on crates.io yet.
 
 ---
 
-- [Getting started](#getting-started)
+- [Command line](#command-line)
+- [Getting started with the library](#getting-started-with-the-library)
 - [Options](#options)
 - [How it works](#how-it-works)
 - [Roadmap](#roadmap)
@@ -36,7 +37,45 @@ std::fs::write("cover.svg", model.svg())?;
 
 ---
 
-## Getting started
+## Command line
+
+**1. Install the `geometrize` command** (from a clone of this repository):
+
+```sh
+cargo install --path crates/cli
+```
+
+**2. Turn a photo into a cover:**
+
+```sh
+geometrize -i photo.jpg -o cover.svg --max-size 30k
+# seed 42 (pass --seed 42 to reproduce)
+# done: 430 shapes, score 0.0410, 29960 bytes in … s -> cover.svg
+```
+
+It reads JPEG and PNG, turns phone photos upright, and shrinks the photo to 256 pixels on its long side before searching. Without `--seed` it picks one and prints it, so you can make the same file again. Progress goes to stderr, and `-o -` writes the SVG to stdout.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `-i, --input <file>` | required | JPEG or PNG photo to read |
+| `-o, --output <file>` | required | SVG file to write, or `-` for stdout |
+| `-n, --shapes <n>` | 500 | Stop after n shapes |
+| `--max-size <size>` | none | Keep the SVG at or under this size: `30000`, `30k`, `1.5m` (k = 1000 bytes) |
+| `--opacity <0.01-1>` | 0.5 | Opacity of every shape |
+| `--shape <kind>` | `triangle` | Shape to use; repeat for several (only `triangle` for now) |
+| `--width <px>` | 1200 | Width of the SVG's viewBox |
+| `--bg <rrggbb>` | photo's average | Background colour (`ff8800`, `#ff8800` or `#f80`) |
+| `--seed <n>` | from the clock | Random seed; the same seed gives the same SVG |
+| `--work-size <px>` | 256 | Long side of the photo while searching |
+| `--candidates`, `--age`, `--climbs` | 1000, 100, 16 | Search settings (see [Options](#options)) |
+| `-j, --threads <n>` | all cores | Threads to use |
+| `-q, --quiet` | off | Print nothing except errors |
+
+With both `-n` and `--max-size`, it stops at whichever comes first. `geometrize --help` prints the same list.
+
+---
+
+## Getting started with the library
 
 The core crate doesn't decode or resize images, so pair it with an image library. These steps use [`image`](https://crates.io/crates/image).
 
@@ -126,8 +165,8 @@ Every search has its own random generator, seeded from `(seed, step, search)`, a
 | Part | Location | State |
 | --- | --- | --- |
 | Core library | `crates/core` (`geometrize-core`) | done |
-| Command-line tool | `crates/cli` (`geometrize`) | next |
-| WebAssembly bindings | `crates/wasm` | planned |
+| Command-line tool | `crates/cli` (`geometrize`) | done |
+| WebAssembly bindings | `crates/wasm` | next |
 | Browser preview page | `web/` (Astro) | planned |
 
 ---
@@ -153,8 +192,8 @@ Every search has its own random generator, seeded from `(seed, step, search)`, a
 ## Development
 
 ```sh
-cargo test --workspace
-cargo test -p geometrize-core --features parallel
+cargo test --workspace                              # core with `parallel`, plus the CLI
+cargo test -p geometrize-core                       # core without `parallel` (the WebAssembly path)
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
 
