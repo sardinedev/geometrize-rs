@@ -44,21 +44,42 @@ fn write_photo(path: &Path, width: u32, height: u32) {
     image.save(path).unwrap();
 }
 
+/// A `geometrize` command with these arguments, ready to run.
+fn command(args: &[&str]) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_geometrize"));
+    command.args(args);
+    command
+}
+
 /// Runs `geometrize` with these arguments.
 fn geometrize(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_geometrize"))
-        .args(args)
-        .output()
-        .unwrap()
+    command(args).output().unwrap()
+}
+
+/// The arguments for turning `photo` into `svg` with the fast settings, plus
+/// `extra`.
+fn svg_args<'a>(photo: &'a Path, svg: &'a Path, extra: &[&'a str]) -> Vec<&'a str> {
+    let mut args = vec!["-i", photo.to_str().unwrap(), "-o", svg.to_str().unwrap()];
+    args.extend_from_slice(FAST);
+    args.extend_from_slice(extra);
+    args
 }
 
 /// Runs `geometrize` on `photo` with the fast settings plus `extra`, writing
 /// to `svg`, and returns the result.
 fn make_svg(photo: &Path, svg: &Path, extra: &[&str]) -> Output {
-    let mut args = vec!["-i", photo.to_str().unwrap(), "-o", svg.to_str().unwrap()];
-    args.extend_from_slice(FAST);
-    args.extend_from_slice(extra);
-    geometrize(&args)
+    geometrize(&svg_args(photo, svg, extra))
+}
+
+/// The usual setup: a scratch directory holding a 64×48 `photo.png`, plus
+/// the path of a `cover.svg` next to it (not yet written). Keep the returned
+/// `TempDir` in a named binding (`_dir` is fine): the directory is deleted
+/// when it's dropped.
+fn scratch_with_photo(test: &str) -> (TempDir, PathBuf, PathBuf) {
+    let dir = TempDir::new(test);
+    let (photo, svg) = (dir.join("photo.png"), dir.join("cover.svg"));
+    write_photo(&photo, 64, 48);
+    (dir, photo, svg)
 }
 
 fn stderr(output: &Output) -> String {
@@ -67,9 +88,7 @@ fn stderr(output: &Output) -> String {
 
 #[test]
 fn writes_a_valid_svg() {
-    let dir = TempDir::new("valid");
-    let (photo, svg) = (dir.join("photo.png"), dir.join("cover.svg"));
-    write_photo(&photo, 64, 48);
+    let (_dir, photo, svg) = scratch_with_photo("valid");
 
     let output = make_svg(&photo, &svg, &["-n", "5", "--seed", "1"]);
     assert!(output.status.success(), "{}", stderr(&output));
@@ -85,21 +104,15 @@ fn writes_a_valid_svg() {
 
 #[test]
 fn same_seed_and_any_thread_count_give_the_same_file() {
-    let dir = TempDir::new("seed");
-    let photo = dir.join("photo.png");
-    write_photo(&photo, 64, 48);
+    let (dir, photo, _) = scratch_with_photo("seed");
 
-    let files: Vec<String> = [["-j", "1"], ["-j", "4"], ["-j", "4"]]
-        .iter()
-        .enumerate()
-        .map(|(i, threads)| {
-            let svg = dir.join(&format!("cover{i}.svg"));
-            let mut extra = vec!["-n", "10", "--seed", "42"];
-            extra.extend_from_slice(threads);
-            assert!(make_svg(&photo, &svg, &extra).status.success());
-            std::fs::read_to_string(svg).unwrap()
-        })
-        .collect();
+    let mut files = Vec::new();
+    for (i, threads) in ["1", "4", "4"].into_iter().enumerate() {
+        let svg = dir.join(&format!("cover{i}.svg"));
+        let output = make_svg(&photo, &svg, &["-n", "10", "--seed", "42", "-j", threads]);
+        assert!(output.status.success(), "{}", stderr(&output));
+        files.push(std::fs::read_to_string(svg).unwrap());
+    }
     assert_eq!(files[0], files[1], "1 thread vs 4");
     assert_eq!(files[1], files[2], "repeat run");
 }
@@ -130,9 +143,7 @@ fn printed_seed_reproduces_the_run() {
 
 #[test]
 fn dash_writes_the_svg_to_stdout() {
-    let dir = TempDir::new("stdout");
-    let photo = dir.join("photo.png");
-    write_photo(&photo, 64, 48);
+    let (_dir, photo, _) = scratch_with_photo("stdout");
 
     let output = make_svg(&photo, Path::new("-"), &["-n", "3", "--seed", "1"]);
     assert!(output.status.success());
@@ -146,9 +157,7 @@ fn dash_writes_the_svg_to_stdout() {
 
 #[test]
 fn max_size_is_respected() {
-    let dir = TempDir::new("max-size");
-    let (photo, svg) = (dir.join("photo.png"), dir.join("cover.svg"));
-    write_photo(&photo, 64, 48);
+    let (_dir, photo, svg) = scratch_with_photo("max-size");
 
     let output = make_svg(&photo, &svg, &["--max-size", "2k", "--seed", "1"]);
     assert!(output.status.success(), "{}", stderr(&output));
@@ -159,9 +168,7 @@ fn max_size_is_respected() {
 
 #[test]
 fn quiet_prints_nothing() {
-    let dir = TempDir::new("quiet");
-    let (photo, svg) = (dir.join("photo.png"), dir.join("cover.svg"));
-    write_photo(&photo, 64, 48);
+    let (_dir, photo, svg) = scratch_with_photo("quiet");
 
     let output = make_svg(&photo, &svg, &["-n", "3", "-q"]);
     assert!(output.status.success());
@@ -183,9 +190,7 @@ fn large_photos_are_shrunk_keeping_their_shape() {
 
 #[test]
 fn errors_explain_themselves() {
-    let dir = TempDir::new("errors");
-    let (photo, svg) = (dir.join("photo.png"), dir.join("cover.svg"));
-    write_photo(&photo, 64, 48);
+    let (dir, _, svg) = scratch_with_photo("errors");
 
     let missing = make_svg(&dir.join("nope.png"), &svg, &[]);
     assert_eq!(missing.status.code(), Some(1));
@@ -219,9 +224,7 @@ fn bad_settings_name_their_flag_and_fail_before_reading_the_photo() {
 
 #[test]
 fn too_small_max_size_names_the_flag() {
-    let dir = TempDir::new("small-max-size");
-    let (photo, svg) = (dir.join("photo.png"), dir.join("cover.svg"));
-    write_photo(&photo, 64, 48);
+    let (_dir, photo, svg) = scratch_with_photo("small-max-size");
 
     let output = make_svg(&photo, &svg, &["--max-size", "50"]);
     assert_eq!(output.status.code(), Some(2));
@@ -237,25 +240,18 @@ fn transparent_pixels_are_blended_onto_the_background() {
         .save(&photo)
         .unwrap();
 
-    // Without --bg, transparency becomes white (not black).
-    assert!(make_svg(&photo, &svg, &["-n", "1"]).status.success());
-    let text = std::fs::read_to_string(&svg).unwrap();
-    assert!(
-        text.contains("<path fill=\"#fff\" d=\"M0 0h1200v900H0z\"/>"),
-        "{text}"
-    );
-
-    // With --bg, it becomes that colour.
-    assert!(
-        make_svg(&photo, &svg, &["-n", "1", "--bg", "102030"])
-            .status
-            .success()
-    );
-    let text = std::fs::read_to_string(&svg).unwrap();
-    assert!(
-        text.contains("<path fill=\"#102030\" d=\"M0 0h1200v900H0z\"/>"),
-        "{text}"
-    );
+    let cases: [(&[&str], &str); 2] = [
+        // Without --bg, transparency becomes white (not black).
+        (&["-n", "1"], "#fff"),
+        // With --bg, it becomes that colour.
+        (&["-n", "1", "--bg", "102030"], "#102030"),
+    ];
+    for (flags, fill) in cases {
+        assert!(make_svg(&photo, &svg, flags).status.success(), "{flags:?}");
+        let text = std::fs::read_to_string(&svg).unwrap();
+        let background = format!("<path fill=\"{fill}\" d=\"M0 0h1200v900H0z\"/>");
+        assert!(text.contains(&background), "{flags:?}: {text}");
+    }
 }
 
 #[test]
@@ -277,18 +273,13 @@ fn help_and_version() {
 #[cfg(target_os = "linux")]
 #[test]
 fn failed_stdout_write_is_an_error() {
-    let dir = TempDir::new("dev-full");
-    let photo = dir.join("photo.png");
-    write_photo(&photo, 64, 48);
+    let (_dir, photo, _) = scratch_with_photo("dev-full");
 
     let full = std::fs::OpenOptions::new()
         .write(true)
         .open("/dev/full")
         .unwrap();
-    let mut args = vec!["-i", photo.to_str().unwrap(), "-o", "-", "-n", "3"];
-    args.extend_from_slice(FAST);
-    let output = Command::new(env!("CARGO_BIN_EXE_geometrize"))
-        .args(&args)
+    let output = command(&svg_args(&photo, Path::new("-"), &["-n", "3"]))
         .stdout(full)
         .output()
         .unwrap();

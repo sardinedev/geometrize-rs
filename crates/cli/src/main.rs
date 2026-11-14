@@ -54,6 +54,7 @@ fn usage_error(error: &dyn fmt::Display) -> ExitCode {
 }
 
 /// Something that stopped a run, with enough context to explain it.
+#[derive(Debug)]
 enum CliError {
     /// The photo couldn't be opened or decoded.
     Read {
@@ -194,7 +195,7 @@ fn load_image(path: &Path, work_size: u32, background: Rgba) -> Result<RgbaImage
     // alpha channel (PNGs, in practice) need this; JPEGs skip a full-size
     // copy and loop that would change nothing.
     if image.color().has_alpha() {
-        let mut rgba = image.to_rgba8();
+        let mut rgba = image.into_rgba8();
         flatten_onto(&mut rgba, background);
         image = DynamicImage::ImageRgba8(rgba);
     }
@@ -203,7 +204,7 @@ fn load_image(path: &Path, work_size: u32, background: Rgba) -> Result<RgbaImage
     if image.width().max(image.height()) > work_size {
         image = image.thumbnail(work_size, work_size);
     }
-    Ok(image.to_rgba8())
+    Ok(image.into_rgba8())
 }
 
 /// Blends every partly or fully transparent pixel onto `background`, making
@@ -384,7 +385,7 @@ mod tests {
         let white = Rgba::new(255, 255, 255, 255);
         let loaded = load_image(&path, 256, white);
         std::fs::remove_file(&path).unwrap();
-        let image = loaded.ok().expect("the test image loads");
+        let image = loaded.expect("the test image loads");
 
         assert_eq!(image.dimensions(), (256, 128));
         assert!(

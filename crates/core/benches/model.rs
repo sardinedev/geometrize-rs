@@ -138,37 +138,50 @@ fn svg_at_100_shapes(bencher: Bencher) {
 }
 
 /// The real photo in `fixtures/` (see `fixtures/README.md`), shrunk to 128
-/// pixels on its long side like the synthetic image, as RGBA bytes plus its
-/// width and height.
-fn photo() -> (Vec<u8>, u32, u32) {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/big_ben.jpg");
-    let image = image::open(path)
-        .expect("fixtures/big_ben.jpg decodes")
-        .thumbnail(128, 128)
-        .to_rgba8();
-    let (width, height) = image.dimensions();
-    (image.into_raw(), width, height)
+/// pixels on its long side like the synthetic image. Decoded once per
+/// benchmark, outside the timed part.
+struct Photo {
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
 }
 
-/// A model of the real photo.
-fn photo_model(limit: Limit) -> Model {
-    let (rgba, width, height) = photo();
-    Model::new(&rgba, width, height, options(limit)).unwrap()
+impl Photo {
+    fn load() -> Photo {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/big_ben.jpg");
+        let image = image::open(path)
+            .expect("fixtures/big_ben.jpg decodes")
+            .thumbnail(128, 128)
+            .into_rgba8();
+        let (width, height) = image.dimensions();
+        Photo {
+            rgba: image.into_raw(),
+            width,
+            height,
+        }
+    }
+
+    /// A fresh model of the photo.
+    fn model(&self, limit: Limit) -> Model {
+        Model::new(&self.rgba, self.width, self.height, options(limit)).unwrap()
+    }
 }
 
 /// One full step on a fresh model of the real photo.
 #[divan::bench]
 fn photo_first_step(bencher: Bencher) {
+    let photo = Photo::load();
     bencher
-        .with_inputs(|| photo_model(Limit::Shapes(1)))
+        .with_inputs(|| photo.model(Limit::Shapes(1)))
         .bench_local_refs(|model| black_box(model.step()));
 }
 
 /// A complete 25-shape run on the real photo.
 #[divan::bench]
 fn photo_run_to_25_shapes(bencher: Bencher) {
+    let photo = Photo::load();
     bencher
-        .with_inputs(|| photo_model(Limit::Shapes(25)))
+        .with_inputs(|| photo.model(Limit::Shapes(25)))
         .bench_local_values(|mut model| {
             while model.step().is_some() {}
             black_box(model.bytes())

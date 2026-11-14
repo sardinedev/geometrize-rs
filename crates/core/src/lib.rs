@@ -156,6 +156,11 @@ pub struct Options {
     /// Seed for the random search. The same seed gives the same SVG. Default 0.
     pub seed: u64,
     /// Background colour. `None` (the default) uses the image's average colour.
+    ///
+    /// The model treats the image as opaque and ignores its alpha channel, so
+    /// callers should blend transparent pixels onto a background before
+    /// passing the image in. The `geometrize` CLI blends onto this colour, or
+    /// onto white when it's `None`.
     pub bg: Option<Rgba>,
     /// Random shapes tried per search. Default 1000.
     pub candidates: u32,
