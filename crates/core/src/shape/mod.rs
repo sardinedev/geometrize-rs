@@ -1,17 +1,18 @@
 //! The shapes the optimiser can place.
 //!
 //! This module is the one place a new shape type gets wired in. To add one:
-//! 1. add a variant to [`ShapeKind`] (and to [`ShapeKind::ALL`], which the
-//!    compiler can't check) and to [`Shape`];
+//! 1. add a variant to [`ShapeKind`] and to [`Shape`], and add it to
+//!    [`ShapeKind::ALL`] by hand: that list is the one place the compiler
+//!    can't check (a missing entry means the name can't be parsed);
 //! 2. write a file next to `triangle.rs` with `random`, `mutate`,
 //!    `rasterize` and `write_svg`;
 //! 3. add a match arm to each method below.
 //!
 //! The one rule a new shape's `rasterize` must follow: **never cover the same
-//! pixel twice** (no overlapping scanlines). The partial error update in
-//! [`crate::pixels::difference_after_drawing`] removes each covered pixel's old
-//! error once, so a pixel visited twice would corrupt the total. Give the new
-//! shape a test like `rows_are_unique_and_sorted_within_each_half` in `raster.rs`.
+//! pixel twice**. The partial error update in
+//! [`crate::pixels::difference_after_drawing`] removes each covered pixel's
+//! old error once, so a pixel visited twice would corrupt the total. Filling
+//! one span per row, as `raster::rasterize_triangle` does, guarantees it.
 //!
 //! The search, the model, the colour maths and the SVG writer only ever see
 //! [`Shape`], so nothing else changes. An enum (rather than a trait object)
@@ -22,17 +23,22 @@ mod triangle;
 
 pub use triangle::Triangle;
 
-use crate::raster::{Scanline, crop_scanlines};
+use std::fmt;
+use std::str::FromStr;
+
+use crate::raster::Span;
 use crate::rng::Rng;
 
 /// The kinds of shape the optimiser can be asked to use.
 ///
 /// The numeric value is a stable code (the WASM build sends it to the browser
-/// so the canvas renderer knows how to draw each shape).
+/// so the canvas renderer knows how to draw each shape). The name, as used on
+/// the command line, comes from [`Display`](fmt::Display) and is read back by
+/// [`FromStr`]: `"triangle".parse::<ShapeKind>()`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum ShapeKind {
-    /// A triangle with all three angles above 15°.
+    /// A triangle with all three angles wider than 15°.
     Triangle = 0,
 }
 
@@ -40,22 +46,55 @@ impl ShapeKind {
     /// Every supported kind.
     pub const ALL: &'static [ShapeKind] = &[ShapeKind::Triangle];
 
-    /// The lowercase name used on the command line, e.g. `"triangle"`.
-    pub fn name(self) -> &'static str {
+    /// The lowercase name, e.g. `"triangle"`.
+    fn name(self) -> &'static str {
         match self {
             ShapeKind::Triangle => "triangle",
         }
     }
+}
 
-    /// Looks a kind up by its [`name`](ShapeKind::name). Returns `None` for an
-    /// unknown name.
-    pub fn from_name(name: &str) -> Option<ShapeKind> {
+impl fmt::Display for ShapeKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+impl FromStr for ShapeKind {
+    type Err = UnknownShapeKind;
+
+    /// Reads a kind from its lowercase name, e.g. `"triangle"`.
+    fn from_str(name: &str) -> Result<ShapeKind, UnknownShapeKind> {
         ShapeKind::ALL
             .iter()
             .copied()
             .find(|kind| kind.name() == name)
+            .ok_or_else(|| UnknownShapeKind {
+                name: name.to_string(),
+            })
     }
 }
+
+/// A name that isn't a [`ShapeKind`]. Its message lists the valid names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownShapeKind {
+    /// The name that was given.
+    name: String,
+}
+
+impl fmt::Display for UnknownShapeKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let names: Vec<&str> = ShapeKind::ALL.iter().map(|kind| kind.name()).collect();
+        write!(
+            f,
+            "unknown shape '{}' (available: {})",
+            self.name,
+            names.join(", ")
+        )
+    }
+}
+
+impl std::error::Error for UnknownShapeKind {}
 
 /// One shape, positioned in working-image pixel coordinates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +105,7 @@ pub enum Shape {
 
 impl Shape {
     /// The kind of this shape.
+    #[must_use]
     pub fn kind(&self) -> ShapeKind {
         match self {
             Shape::Triangle(_) => ShapeKind::Triangle,
@@ -96,15 +136,13 @@ impl Shape {
         }
     }
 
-    /// Replaces `lines` with the scanlines this shape covers, cropped to a
-    /// `width × height` image. No pixel may appear in more than one line (see
-    /// the module docs).
-    pub(crate) fn rasterize(&self, width: i32, height: i32, lines: &mut Vec<Scanline>) {
-        lines.clear();
+    /// Replaces `spans` with the pixels this shape covers, clipped to a
+    /// `width × height` image. No pixel may appear twice (see the module
+    /// docs).
+    pub(crate) fn rasterize(&self, width: usize, height: usize, spans: &mut Vec<Span>) {
         match self {
-            Shape::Triangle(triangle) => triangle.rasterize(lines),
+            Shape::Triangle(triangle) => triangle.rasterize(width, height, spans),
         }
-        crop_scanlines(lines, width, height);
     }
 
     /// Appends the shape's SVG element to `out`.
@@ -126,9 +164,17 @@ mod tests {
     #[test]
     fn names_round_trip() {
         for &kind in ShapeKind::ALL {
-            assert_eq!(ShapeKind::from_name(kind.name()), Some(kind));
+            assert_eq!(kind.to_string().parse::<ShapeKind>(), Ok(kind));
         }
-        assert_eq!(ShapeKind::from_name("hexagon"), None);
+    }
+
+    #[test]
+    fn unknown_names_list_the_valid_ones() {
+        let error = "hexagon".parse::<ShapeKind>().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "unknown shape 'hexagon' (available: triangle)"
+        );
     }
 
     #[test]

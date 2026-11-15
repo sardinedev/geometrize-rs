@@ -1,6 +1,6 @@
 //! Benchmarks for the public `Model` API.
 //!
-//! Run them with `cargo bench -p geometrize-core`, or through CodSpeed with
+//! Run them with `cargo bench -p geometrize-core`, or through `CodSpeed` with
 //! `cargo codspeed build -p geometrize-core && cargo codspeed run`.
 //!
 //! Most benchmarks use a synthetic 128×85 "sun in the sky" picture, about

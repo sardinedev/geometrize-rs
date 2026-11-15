@@ -70,7 +70,7 @@ fn byte_limit_is_never_exceeded() {
     let svg = model.svg();
     assert!(svg.len() <= limit, "{} > {limit}", svg.len());
     assert_eq!(model.bytes(), svg.len());
-    assert!(!model.shapes().is_empty());
+    assert_ne!(model.shapes(), []);
     // A triangle is ~50 bytes here, so stopping must have left little room.
     assert!(
         limit - svg.len() < 100,
@@ -159,7 +159,7 @@ fn stops_when_no_shape_can_help() {
     let mut model = Model::new(&flat, SIZE, SIZE, quick_options(Limit::Shapes(10))).unwrap();
     assert!(model.step().is_none());
     assert!(model.step().is_none(), "stays stopped");
-    assert!(model.shapes().is_empty());
+    assert_eq!(model.shapes(), []);
     assert_eq!(model.score(), 0.0);
 }
 
@@ -383,4 +383,30 @@ fn write_preview_svg() {
     while model.step().is_some() {}
     std::fs::write("/tmp/core.svg", model.svg()).unwrap();
     println!("score {:.4}, {} bytes", model.score(), model.bytes());
+}
+
+/// The exact SVG for a tiny fixed run.
+///
+/// This fails on *any* change to the output, so it catches refactors that
+/// alter results by accident. It also checks that every platform produces the
+/// same bytes: it was recorded on macOS, and CI runs it on Linux, both
+/// natively and as WebAssembly (`wasm32-wasip1`). When a change to the output
+/// is intended, update `EXPECTED` in the same pull request and say why.
+#[test]
+fn golden_output() {
+    // `r##"…"##` because the SVG itself contains `"#`.
+    const EXPECTED: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="#8d8a6c" d="M0 0h64v64H0z"/><path fill="#004a81" fill-opacity=".5" d="M39-31 1-27 1 95z"/><path fill="#ff9953" fill-opacity=".5" d="M5 37 79-17 95 65z"/><path fill="#40ff7e" fill-opacity=".5" d="M95 77-31 13-31 95z"/></svg>"##;
+    let options = Options {
+        limit: Limit::Shapes(3),
+        candidates: 50,
+        age: 10,
+        climbs: 4,
+        out_width: 64,
+        seed: 1,
+        ..Options::default()
+    };
+    let mut model = Model::new(&synthetic_image(), SIZE, SIZE, options).unwrap();
+    for _ in model.steps() {}
+    let svg = model.svg();
+    assert_eq!(svg, EXPECTED);
 }

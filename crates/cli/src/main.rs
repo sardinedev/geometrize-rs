@@ -163,8 +163,8 @@ fn run(args: Args) -> Result<(), CliError> {
 
 /// Adds shapes until the model reaches a limit, reporting each one.
 fn add_shapes(model: &mut Model, progress: &mut Progress) {
-    while let Some(step) = model.step() {
-        progress.step(model.shapes().len(), &step);
+    for step in model.steps() {
+        progress.step(&step);
     }
 }
 
@@ -177,7 +177,7 @@ fn load_image(path: &Path, work_size: u32, background: Rgba) -> Result<RgbaImage
         source,
     };
     let mut decoder = ImageReader::open(path)
-        .and_then(|reader| reader.with_guessed_format())
+        .and_then(ImageReader::with_guessed_format)
         .map_err(|error| read_error(error.into()))?
         .into_decoder()
         .map_err(read_error)?;
@@ -233,8 +233,7 @@ fn flatten_onto(image: &mut RgbaImage, background: Rgba) {
 fn seed_from_clock() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as u64)
-        .unwrap_or(0)
+        .map_or(0, |elapsed| elapsed.as_millis() as u64)
 }
 
 /// Writes the SVG to its file or to stdout.
@@ -290,25 +289,25 @@ impl Progress {
         }
     }
 
-    /// Reports that shape number `shapes` was added.
-    fn step(&mut self, shapes: usize, step: &StepResult) {
+    /// Reports the shape a step added.
+    fn step(&mut self, step: &StepResult) {
         if !self.enabled {
             return;
         }
-        let line = self.line(shapes, step);
+        let line = self.line(step);
         if self.live {
             // `\r` returns to the start of the line; `\x1b[K` clears what's
             // left of the previous, possibly longer, line.
             eprint!("\r{line}\x1b[K");
             self.line_open = true;
-        } else if shapes.is_multiple_of(Self::LOG_EVERY) {
+        } else if step.shapes.is_multiple_of(Self::LOG_EVERY) {
             eprintln!("{line}");
         }
     }
 
     /// One progress line: `shape 120/500  score 0.0712  12.3/30.0 KB  85 shapes/s`.
-    fn line(&self, shapes: usize, step: &StepResult) -> String {
-        let mut line = format!("shape {shapes}");
+    fn line(&self, step: &StepResult) -> String {
+        let mut line = format!("shape {}", step.shapes);
         if let Some(max) = self.limit.max_shapes() {
             line.push_str(&format!("/{max}"));
         }
@@ -320,7 +319,7 @@ impl Progress {
         if let Some(max) = self.limit.max_bytes() {
             line.push_str(&format!("/{:.1}", kilobytes(max)));
         }
-        let rate = shapes as f64 / seconds(self.started.elapsed());
+        let rate = step.shapes as f64 / seconds(self.started.elapsed());
         line.push_str(&format!(" KB  {rate:.0} shapes/s"));
         line
     }

@@ -5,21 +5,21 @@
 Turn a photo into a small, stylised SVG built from a few hundred semi-transparent triangles, which makes good cover images and placeholders. You set the **maximum file size**, and the same seed always gives the **exact same file**. It's a Rust port of [fogleman/primitive](https://github.com/fogleman/primitive), trimmed down to triangles and SVG, with a core that has no dependencies so it can run on the command line and in the browser.
 
 - **Size budget.** Stop at a number of shapes, a maximum SVG size in bytes, or whichever comes first. The SVG never goes over the byte limit.
-- **Reproducible.** The same image, options and seed give a byte-identical SVG, however many threads the search runs on.
+- **Reproducible.** The same image, options and seed give a byte-identical SVG, however many threads the search runs on, and on every platform: native and WebAssembly builds produce the same bytes.
 - **Compact output.** One-line, SVGO-style markup: `#rgb` colours where possible, no space before negative numbers, and no wrapper groups or transforms.
 - **No dependencies.** The core crate uses only the standard library. The optional `parallel` feature adds [rayon](https://github.com/rayon-rs/rayon).
-- **primitive's maths.** The colour fitting, alpha blending and scoring are ported integer for integer from primitive's Go code.
+- **Exact maths.** Colour fitting, blending and scoring are integer maths with exact rounding. Everything else uses only the float operations IEEE-754 defines exactly (`+ − × ÷`, `sqrt`, rounding), never maths-library functions like `ln` or `cos`, so results can't depend on the platform.
 
 ```rust
 use geometrize_core::{Limit, Model, Options};
 
 let options = Options { limit: Limit::Bytes(30_000), ..Options::default() };
 let mut model = Model::new(&rgba, width, height, options)?; // RGBA pixels, ~256 px wide
-while model.step().is_some() {}                             // add triangles until the budget is used
+for _ in model.steps() {}                                   // add triangles until the budget is used
 std::fs::write("cover.svg", model.svg())?;
 // cover.svg, all on one line:
-// <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 802"><path fill="#6c92bf" d="M0 0h1200v802H0z"/>
-//   <path fill="#00003b" fill-opacity=".5" d="M645 391 1198 874 1198-73z"/>…</svg>
+// <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 802"><path fill="#6d93c0" d="M0 0h1200v802H0z"/>
+//   <path fill="#000039" fill-opacity=".5" d="M1141 874 626 382 1216-73z"/>…</svg>
 ```
 
 > **Status:** the core library and the `geometrize` command-line tool work and are tested. The WebAssembly build and a browser preview page are next. Nothing is published on crates.io yet.
@@ -50,7 +50,7 @@ cargo install --path crates/cli
 ```sh
 geometrize -i photo.jpg -o cover.svg --max-size 30k
 # seed 42 (pass --seed 42 to reproduce)
-# done: 430 shapes, score 0.0410, 29960 bytes in … s -> cover.svg
+# done: 430 shapes, score 0.0470, 29980 bytes in … s -> cover.svg
 ```
 
 It reads JPEG and PNG, turns phone photos upright, blends transparent pixels onto the background, and shrinks the photo to 256 pixels on its long side before searching. Without `--seed` it picks one and prints it, so you can make the same file again. Progress goes to stderr, and `-o -` writes the SVG to stdout.
@@ -104,8 +104,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ..Options::default()
     };
     let mut model = Model::new(photo.as_raw(), width, height, options)?;
-    while let Some(step) = model.step() {
-        eprintln!("shape {} score {:.4} {} bytes", model.shapes().len(), step.score, step.bytes);
+    for step in model.steps() {
+        eprintln!("shape {} score {:.4} {} bytes", step.shapes, step.score, step.bytes);
     }
 
     std::fs::write("cover.svg", model.svg())?;
@@ -156,7 +156,7 @@ Each step adds the one triangle that most improves the picture:
 
 Every search has its own random generator, seeded from `(seed, step, search)`, and ties go to the lowest search number. That's why the thread count can't change the output.
 
-> Determinism holds across runs and thread counts, not between native and WebAssembly builds. `ln`, `cos` and `acos` come from different maths libraries on those targets, so a seed can very occasionally give a slightly different SVG in the browser.
+> The same seed also gives the same SVG on every platform, because no step uses a maths-library function (`ln`, `cos`, `acos`…) whose result could differ between them. A golden test pins the exact output of a small run, and CI checks it both natively and on WebAssembly.
 
 ---
 
@@ -173,7 +173,7 @@ Every search has its own random generator, seeded from `(seed, step, search)`, a
 
 ## What was trimmed from primitive
 
-**Kept:** the triangle shape, the scanline rasteriser, the integer pixel maths, the random search plus hill climbing, the average-colour background, and SVG output.
+**Kept:** primitive's approach. That means the triangle shape, the random search plus hill climbing, fitting each shape's colour to the photo underneath it, scoring only the pixels a shape covers, the average-colour background, and SVG output. The code itself is idiomatic Rust rather than a line-for-line port, so results differ from primitive's for the same settings.
 
 **Left out:**
 - **The other seven shape types.** The `Shape` enum is built so they can come back. Adding one takes a variant, one file with `random`, `mutate`, `rasterize` and `write_svg`, and a match arm per method in `crates/core/src/shape/mod.rs`.
@@ -185,7 +185,8 @@ Every search has its own random generator, seeded from `(seed, step, search)`, a
 - a maximum-size stop condition;
 - per-search seeds, so threading can't change the result;
 - the compact `<path>` output;
-- exact integer error totals, so no rounding error builds up from step to step.
+- exact integer error totals, so no rounding error builds up from step to step;
+- plain 8-bit colour maths and a pixel-centre rasteriser, in place of primitive's 16-bit premultiplied maths (from Go's `image` package) and float-stepped scanlines. It's faster on the same search (see [docs/DECISIONS.md](docs/DECISIONS.md)) and identical on every platform.
 
 ---
 
