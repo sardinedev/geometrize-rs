@@ -52,7 +52,7 @@ jobs:
       - name: Setup rust toolchain
         run: |
           rustup toolchain install
-          rustup target add wasm32-wasip1
+          rustup target add wasm32-wasip1 wasm32-unknown-unknown
 
       - name: Install wasmtime
         uses: bytecodealliance/actions/wasmtime/setup@v1
@@ -69,3 +69,9 @@ jobs:
         run: cargo test -p geometrize-core --target wasm32-wasip1
         env:
           CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime
+
+      # The browser bindings target plain `wasm32-unknown-unknown` (no WASI).
+      # Their unit tests run natively in the job above; this checks they also
+      # build and pass clippy for the target the preview site uses.
+      - name: Lint the browser bindings for WebAssembly
+        run: cargo clippy -p geometrize-wasm --target wasm32-unknown-unknown -- -D warnings

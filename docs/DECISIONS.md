@@ -56,6 +56,13 @@ Most entries also have a comment at the spot in the code, so a reader there sees
 - **The progress line is built on every step,** even when stderr isn't a terminal and only every 50th line is printed.
 - **The `args.rs` module doc** says only formats are checked there, though a few CLI-only ranges are too.
 
+**WebAssembly bindings (`crates/wasm`)**
+- **Settings are a `SessionOptions` class, not a plain JS object.** Reading an object would need `serde` and `serde-wasm-bindgen` (or `js-sys` and hand-written property lookups). The class needs no extra dependency, and the generated `.d.ts` types every field.
+- **`Session::step` returns an `Int32Array`,** not the `Float32Array` of the original plan. Every value (kind, coordinates, colour) is a whole number.
+- **The seed is a `BigInt` (`u64`),** so any seed the CLI prints can be pasted into the page unchanged; a JS `number` would lose seeds above 2⁵³.
+- **No background or shape-kind settings yet.** The background is always the photo's average and the only shape is the triangle. Add them when the page needs them.
+- **No `wasm-bindgen-test` in CI.** The bindings only translate types: their unit tests run natively, CI lints them for `wasm32-unknown-unknown`, and the core's own tests (golden SVG included) run on WebAssembly. Running the built module in Node matched the golden SVG byte for byte; revisit once the preview page exists and can be tested end to end.
+
 **Tests**
 - **Unit tests stay next to the code** in `#[cfg(test)]` modules, rather than all living in `tests/`. Easier to read alongside what they test.
 - **A shared "run until done" benchmark helper isn't worth it.** The one-line `while model.step().is_some() {}` reads better inline.

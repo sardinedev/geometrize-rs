@@ -1,0 +1,22 @@
+[package]
+name = "geometrize-wasm"
+description = "WebAssembly bindings for geometrize-core, used by the browser preview"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+# Only the preview site uses it, built with wasm-pack; nothing to publish.
+publish = false
+
+[lib]
+# `cdylib` is the `.wasm` module; `rlib` lets the unit tests run natively.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Without the `parallel` feature: the browser build is single-threaded (see
+# the crate docs).
+geometrize-core = { path = "../core" }
+wasm-bindgen = "0.2.130"
+
+[lints]
+workspace = true
