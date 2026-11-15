@@ -197,6 +197,7 @@ The Rust version is pinned in `rust-toolchain.toml`, so rustup installs the righ
 ```sh
 cargo test --workspace                              # core with `parallel`, the CLI and the WebAssembly bindings
 cargo test -p geometrize-core                       # core without `parallel` (the WebAssembly path)
+cargo test -p geometrize-wasm                       # the browser bindings, also without `parallel`
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
 

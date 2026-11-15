@@ -60,6 +60,7 @@ Most entries also have a comment at the spot in the code, so a reader there sees
 - **Settings are a `SessionOptions` class, not a plain JS object.** Reading an object would need `serde` and `serde-wasm-bindgen` (or `js-sys` and hand-written property lookups). The class needs no extra dependency, and the generated `.d.ts` types every field.
 - **`Session::step` returns an `Int32Array`,** not the `Float32Array` of the original plan. Every value (kind, coordinates, colour) is a whole number.
 - **The seed is a `BigInt` (`u64`),** so any seed the CLI prints can be pasted into the page unchanged; a JS `number` would lose seeds above 2⁵³.
+- **Out-of-range numbers from JS aren't caught.** wasm-bindgen turns a JS number into a `u32` with `>>> 0`, so `-1` arrives as 4294967295 (and `candidates = -1` would make a step run for hours). Catching it would mean `f64` fields and a second set of range checks next to the core's. The page's inputs set `min`/`max` instead, and `SessionOptions` documents the wrapping.
 - **No background or shape-kind settings yet.** The background is always the photo's average and the only shape is the triangle. Add them when the page needs them.
 - **No `wasm-bindgen-test` in CI.** The bindings only translate types: their unit tests run natively, CI lints them for `wasm32-unknown-unknown`, and the core's own tests (golden SVG included) run on WebAssembly. Running the built module in Node matched the golden SVG byte for byte; revisit once the preview page exists and can be tested end to end.
 
