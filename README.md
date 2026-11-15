@@ -22,7 +22,7 @@ std::fs::write("cover.svg", model.svg())?;
 //   <path fill="#000039" fill-opacity=".5" d="M1141 874 626 382 1216-73z"/>…</svg>
 ```
 
-> **Status:** the core library and the `geometrize` command-line tool work and are tested. The WebAssembly build and a browser preview page are next. Nothing is published on crates.io yet.
+> **Status:** the core library, the `geometrize` command-line tool and the WebAssembly bindings work and are tested. A browser preview page is next. Nothing is published on crates.io or npm yet.
 
 ---
 
@@ -166,8 +166,8 @@ Every search has its own random generator, seeded from `(seed, step, search)`, a
 | --- | --- | --- |
 | Core library | `crates/core` (`geometrize-core`) | done |
 | Command-line tool | `crates/cli` (`geometrize`) | done |
-| WebAssembly bindings | `crates/wasm` | next |
-| Browser preview page | `web/` (Astro) | planned |
+| WebAssembly bindings | `crates/wasm` (`geometrize-wasm`) | done |
+| Browser preview page | `web/` (Astro) | next |
 
 ---
 
@@ -195,10 +195,15 @@ Every search has its own random generator, seeded from `(seed, step, search)`, a
 The Rust version is pinned in `rust-toolchain.toml`, so rustup installs the right one automatically. Lints shared by all crates are in `[workspace.lints]` in `Cargo.toml`. Before reworking something for speed or style, check [docs/DECISIONS.md](docs/DECISIONS.md): it lists what was already tried or decided against, and why.
 
 ```sh
-cargo test --workspace                              # core with `parallel`, plus the CLI
+cargo test --workspace                              # core with `parallel`, the CLI and the WebAssembly bindings
 cargo test -p geometrize-core                       # core without `parallel` (the WebAssembly path)
+cargo test -p geometrize-wasm                       # the browser bindings, also without `parallel`
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
+
+# WebAssembly bindings for the browser (needs `rustup target add wasm32-unknown-unknown`
+# and `cargo install wasm-pack`); writes the JS module and types to crates/wasm/pkg
+wasm-pack build crates/wasm --target web --release
 
 # Benchmarks (divan, also run by CodSpeed in CI)
 cargo bench -p geometrize-core

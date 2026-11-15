@@ -45,7 +45,7 @@ Most entries also have a comment at the spot in the code, so a reader there sees
 - **`Model::rgb()` returns RGB, not RGBA.** It replaced the RGBA `pixels()`, which nothing called. The planned WASM preview draws each shape on the browser canvas instead of copying pixels. If a pixel copy is ever needed, add a `write_rgba(&mut [u8])` then.
 - **Width and height are `i32` for shape creation and mutation but `usize` for rasterising.** Shapes need signed coordinates (vertices can sit in the margin outside the image), while clipping and indexing need unsigned sizes. Unifying them would only move the casts around.
 - **No `Model::limit()` accessor.** The CLI copies the limit before building the model, and the WASM form already knows it.
-- **The working size (256) and the rule for shrinking stay in the CLI,** not in the core. The browser resamples differently anyway, so sharing them wouldn't make CLI and web output match. Revisit with the WASM crate.
+- **The working size (256) and the rule for shrinking stay in the CLI,** not in the core. The browser resamples differently anyway, so sharing them wouldn't make CLI and web output match. The WASM bindings take pixels that are already shrunk; revisit when the preview page (`web/`) has to shrink photos itself.
 - **No pinned `const` struct sizes, `#[cold]` paths, custom allocators, PGO or BOLT.** These are tools for much larger programs; nothing here has asked for them.
 
 **CLI (`crates/cli`)**
@@ -55,6 +55,14 @@ Most entries also have a comment at the spot in the code, so a reader there sees
 - **`parse_size`'s upper bound** lets one value just past `usize::MAX` through, which then saturates. Harmless.
 - **The progress line is built on every step,** even when stderr isn't a terminal and only every 50th line is printed.
 - **The `args.rs` module doc** says only formats are checked there, though a few CLI-only ranges are too.
+
+**WebAssembly bindings (`crates/wasm`)**
+- **Settings are a `SessionOptions` class, not a plain JS object.** Reading an object would need `serde` and `serde-wasm-bindgen` (or `js-sys` and hand-written property lookups). The class needs no extra dependency, and the generated `.d.ts` types every field.
+- **`Session::step` returns an `Int32Array`,** not the `Float32Array` of the original plan. Every value (kind, coordinates, colour) is a whole number.
+- **The seed is a `BigInt` (`u64`),** so any seed the CLI prints can be pasted into the page unchanged; a JS `number` would lose seeds above 2⁵³.
+- **Out-of-range numbers from JS aren't caught.** wasm-bindgen turns a JS number into a `u32` with `>>> 0`, so `-1` arrives as 4294967295 (and `candidates = -1` would make a step run for hours). Catching it would mean `f64` fields and a second set of range checks next to the core's. The page's inputs set `min`/`max` instead, and `SessionOptions` documents the wrapping.
+- **No background or shape-kind settings yet.** The background is always the photo's average and the only shape is the triangle. Add them when the page needs them.
+- **No `wasm-bindgen-test` in CI.** The bindings only translate types: their unit tests run natively, CI lints them for `wasm32-unknown-unknown`, and the core's own tests (golden SVG included) run on WebAssembly. Running the built module in Node matched the golden SVG byte for byte; revisit once the preview page exists and can be tested end to end.
 
 **Tests**
 - **Unit tests stay next to the code** in `#[cfg(test)]` modules, rather than all living in `tests/`. Easier to read alongside what they test.

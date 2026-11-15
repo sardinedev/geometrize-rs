@@ -1,0 +1,28 @@
+[package]
+name = "geometrize-wasm"
+description = "WebAssembly bindings for geometrize-core, used by the browser preview"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+# Only the preview site uses it, built with wasm-pack; nothing to publish.
+publish = false
+
+[lib]
+# Only `cdylib`, the `.wasm` module. Adding `rlib` makes Cargo silently drop
+# the release profile's `lto = "fat"` for this crate (checked with
+# `cargo build -v`: the module came out 5% larger). The unit tests don't need
+# an `rlib`: `cargo test` builds them with `--test`.
+crate-type = ["cdylib"]
+# There are no Rust doctests (the crate docs' example is JavaScript), and
+# running rustdoc's test pass would link an unused native `cdylib`.
+doctest = false
+
+[dependencies]
+# Without the `parallel` feature: the browser build is single-threaded (see
+# the crate docs).
+geometrize-core = { path = "../core" }
+wasm-bindgen = "0.2.130"
+
+[lints]
+workspace = true
