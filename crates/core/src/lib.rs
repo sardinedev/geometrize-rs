@@ -53,7 +53,6 @@
 //!
 //! - `parallel`: run each step's independent searches on rayon's thread pool.
 
-#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 mod model;
@@ -156,6 +155,11 @@ pub struct Options {
     /// Seed for the random search. The same seed gives the same SVG. Default 0.
     pub seed: u64,
     /// Background colour. `None` (the default) uses the image's average colour.
+    ///
+    /// The model treats the image as opaque and ignores its alpha channel, so
+    /// callers should blend transparent pixels onto a background before
+    /// passing the image in. The `geometrize` CLI blends onto this colour, or
+    /// onto white when it's `None`.
     pub bg: Option<Rgba>,
     /// Random shapes tried per search. Default 1000.
     pub candidates: u32,
@@ -163,6 +167,22 @@ pub struct Options {
     pub age: u32,
     /// Independent searches per step; the best one wins. Default 16.
     pub climbs: u32,
+}
+
+impl Options {
+    /// Checks the settings that don't depend on the image: opacity range,
+    /// at least one shape kind, and no zero search settings or output width.
+    ///
+    /// [`Model::new`] runs the same checks (plus the image-dependent ones),
+    /// so calling this is optional. It lets a caller reject bad settings
+    /// before doing expensive work such as decoding a large photo.
+    ///
+    /// # Errors
+    /// Returns the first problem found, as the same [`Error`] that
+    /// [`Model::new`] would return.
+    pub fn validate(&self) -> Result<(), Error> {
+        model::validate_options(self).map(|_percent| ())
+    }
 }
 
 impl Default for Options {

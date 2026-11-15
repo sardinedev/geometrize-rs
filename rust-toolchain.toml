@@ -1,0 +1,9 @@
+# The Rust version used locally and in CI, so a new stable release can't
+# change the build or add clippy lints without anyone deciding to.
+#
+# To upgrade: change `channel` here and `rust-version` in Cargo.toml together,
+# in a pull request of its own, then fix anything the new compiler and clippy
+# report.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]

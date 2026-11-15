@@ -1,0 +1,22 @@
+[package]
+name = "geometrize-cli"
+description = "Turn a photo into a compact SVG of semi-transparent triangles"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# The package can't be called `geometrize` (taken on crates.io), but the
+# command is.
+[[bin]]
+name = "geometrize"
+path = "src/main.rs"
+
+[dependencies]
+geometrize-core = { path = "../core", features = ["parallel"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+lexopt = "0.3"
+rayon = "1"
+
+[lints]
+workspace = true

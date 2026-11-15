@@ -16,9 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Stable Rust is preinstalled on GitHub runners; this only ensures components.
+      # With no arguments, rustup installs the toolchain pinned in
+      # rust-toolchain.toml, with its clippy and rustfmt components.
       - name: Setup rust toolchain
-        run: rustup component add clippy rustfmt
+        run: rustup toolchain install
 
       - name: Cache dependencies and build artifacts
         uses: Swatinem/rust-cache@v2
@@ -33,3 +34,9 @@ jobs:
 
       - name: Run tests
         run: cargo test --workspace
+
+      # The CLI turns on the core's `parallel` feature for the whole workspace
+      # build above. Testing the core on its own builds it without `parallel`,
+      # which is the single-threaded path the WebAssembly build uses.
+      - name: Run core tests without the parallel feature
+        run: cargo test -p geometrize-core
