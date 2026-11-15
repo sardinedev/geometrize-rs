@@ -17,3 +17,6 @@ geometrize-core = { path = "../core", features = ["parallel"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 lexopt = "0.3"
 rayon = "1"
+
+[lints]
+workspace = true

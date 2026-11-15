@@ -24,3 +24,6 @@ image = { version = "0.25", default-features = false, features = ["jpeg"] }
 [[bench]]
 name = "model"
 harness = false
+
+[lints]
+workspace = true

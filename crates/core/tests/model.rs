@@ -356,7 +356,7 @@ fn other_output_widths_scale_the_view_box() {
 /// Writes a larger result to /tmp/core.svg for a visual check:
 /// `cargo test -p geometrize-core --release --features parallel -- --ignored`
 #[test]
-#[ignore]
+#[ignore = "writes /tmp/core.svg for a visual check; run with --ignored"]
 fn write_preview_svg() {
     let (w, h) = (256u32, 171u32);
     let mut rgba = Vec::new();

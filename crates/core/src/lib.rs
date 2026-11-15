@@ -53,7 +53,6 @@
 //!
 //! - `parallel`: run each step's independent searches on rayon's thread pool.
 
-#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 mod model;

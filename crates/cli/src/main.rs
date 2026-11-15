@@ -6,8 +6,6 @@
 //! reporting progress on stderr, and writes the SVG. Run `geometrize --help`
 //! for the flags.
 
-#![forbid(unsafe_code)]
-
 mod args;
 
 use std::fmt;

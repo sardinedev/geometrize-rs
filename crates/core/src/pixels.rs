@@ -69,8 +69,15 @@ impl Canvas {
     }
 
     /// Index of pixel `(x, y)` in [`Canvas::pixels`]. The coordinates must be
-    /// inside the canvas, which cropped scanlines always are.
+    /// inside the canvas, which cropped scanlines always are (checked in
+    /// debug builds; a negative coordinate would otherwise wrap silently).
     pub(crate) fn index(&self, x: i32, y: i32) -> usize {
+        debug_assert!(
+            x >= 0 && (x as usize) < self.width && y >= 0 && (y as usize) < self.height,
+            "pixel ({x}, {y}) is outside the {}×{} canvas",
+            self.width,
+            self.height
+        );
         y as usize * self.width + x as usize
     }
 

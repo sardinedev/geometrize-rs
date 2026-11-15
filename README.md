@@ -191,6 +191,8 @@ Every search has its own random generator, seeded from `(seed, step, search)`, a
 
 ## Development
 
+The Rust version is pinned in `rust-toolchain.toml`, so rustup installs the right one automatically. Lints shared by all crates are in `[workspace.lints]` in `Cargo.toml`. Before reworking something for speed or style, check [docs/DECISIONS.md](docs/DECISIONS.md): it lists what was already tried or decided against, and why.
+
 ```sh
 cargo test --workspace                              # core with `parallel`, plus the CLI
 cargo test -p geometrize-core                       # core without `parallel` (the WebAssembly path)

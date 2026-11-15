@@ -37,8 +37,11 @@ pub(crate) struct Frame {
 
 impl Frame {
     /// The frame for scaling a `work_width × work_height` image to
-    /// `out_width` wide. `out_width` is treated as at least 1.
+    /// `out_width` wide. `out_width` is treated as at least 1. The working
+    /// size must not be empty, which `Model::new` guarantees (checked in
+    /// debug builds; an empty size would give an infinite scale).
     pub(crate) fn new(work_width: u32, work_height: u32, out_width: u32) -> Frame {
+        debug_assert!(work_width > 0 && work_height > 0, "empty working image");
         let width = out_width.max(1);
         let scale = f64::from(width) / f64::from(work_width);
         let height = (f64::from(work_height) * scale).round().max(1.0) as u32;

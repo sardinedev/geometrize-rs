@@ -6,7 +6,24 @@ resolver = "3"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+# Keep in step with `channel` in rust-toolchain.toml.
 rust-version = "1.99"
+
+# Lints shared by every crate (each opts in with `[lints] workspace = true`).
+# They warn locally and fail CI, which runs clippy with `-D warnings`.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+# Suppressions must say why: `#[expect(clippy::lint, reason = "...")]`.
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+# Leftovers that shouldn't be merged.
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+# `#[ignore]` tests must say why they're ignored.
+ignore_without_reason = "warn"
 
 [profile.release]
 lto = "fat"
