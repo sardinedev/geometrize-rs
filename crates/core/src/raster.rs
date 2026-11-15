@@ -1,127 +1,126 @@
 //! Turning shapes into horizontal runs of pixels.
 //!
-//! Port of primitive's `raster.go` (`rasterizeTriangle` and its two helpers)
-//! and `scanline.go` (`cropScanlines`). Every shape is drawn and scored as a
-//! list of [`Scanline`]s, so the colour maths in [`crate::pixels`] never needs
-//! to know which shape it is working on.
+//! Every shape is drawn and scored as a list of [`Span`]s, so the colour
+//! maths in [`crate::pixels`] never needs to know which shape it is working
+//! on.
+//!
+//! **Coverage rule.** Shape coordinates are pixel centres: the point
+//! `(x, y)` is the centre of pixel `(x, y)`. A pixel is covered when its
+//! centre is inside the shape, using half-open intervals (`top <= y < bottom`
+//! and `left <= x < right`). That gives exactly one span per row, and two
+//! shapes that share an edge never both cover the same pixel.
+//!
+//! Only `+ − × ÷` and `ceil` are used on floats. They are exact under
+//! IEEE-754, so every platform (native or WebAssembly) covers the same pixels.
 
-/// A horizontal run of pixels on row `y`, from `x1` to `x2` inclusive.
-///
-/// primitive's scanlines also carry a coverage alpha. Every shape here is fully
-/// opaque at its edges, so that field is dropped.
-#[derive(Clone, Copy)]
-pub(crate) struct Scanline {
-    /// Row of the run.
+/// A point in working-image pixel coordinates (see the module docs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Point {
+    /// Column, growing to the right.
+    pub x: i32,
+    /// Row, growing downwards.
     pub y: i32,
-    /// First pixel of the run (inclusive).
-    pub x1: i32,
-    /// Last pixel of the run (inclusive).
-    pub x2: i32,
 }
 
-/// A vertex in pixel coordinates: `(x, y)`.
-pub(crate) type Point = (i32, i32);
-
-/// Appends the scanlines covering the triangle `a b c`.
-///
-/// The triangle is sorted top to bottom and split at the middle vertex into a
-/// flat-bottomed part and a flat-topped part, each filled row by row. Lines are
-/// not cropped to the image; call [`crop_scanlines`] afterwards.
-pub(crate) fn rasterize_triangle(a: Point, b: Point, c: Point, lines: &mut Vec<Scanline>) {
-    // primitive sorts with three compare-and-swaps. Its order for vertices on
-    // the same row can differ from this stable sort, but those cases are the
-    // flat ones, which fill the same pixels whichever way round they are.
-    let mut vertices = [a, b, c];
-    vertices.sort_by_key(|&(_, y)| y);
-    let [top, middle, bottom] = vertices;
-
-    if middle.1 == bottom.1 {
-        fill_flat_bottom(top, middle, bottom, lines);
-    } else if top.1 == middle.1 {
-        fill_flat_top(top, middle, bottom, lines);
-    } else {
-        // Split at the middle vertex's row, at the point on the long edge
-        // (top to bottom) at the same height as the middle vertex.
-        let (x1, y1) = top;
-        let (x3, y3) = bottom;
-        let fraction = f64::from(middle.1 - y1) / f64::from(y3 - y1);
-        let split = (x1 + (fraction * f64::from(x3 - x1)) as i32, middle.1);
-        fill_flat_bottom(top, middle, split, lines);
-        fill_flat_top(middle, split, bottom, lines);
+impl Point {
+    /// Creates a point.
+    #[must_use]
+    pub const fn new(x: i32, y: i32) -> Point {
+        Point { x, y }
     }
 }
 
-/// Fills a triangle whose two lower vertices share a row (`b.1 == c.1`), from
-/// the top vertex `a` down to that row, inclusive.
-///
-/// `as i32` truncates towards zero, exactly like Go's `int()`.
-fn fill_flat_bottom((x1, y1): Point, (x2, y2): Point, (x3, y3): Point, lines: &mut Vec<Scanline>) {
-    let slope1 = f64::from(x2 - x1) / f64::from(y2 - y1);
-    let slope2 = f64::from(x3 - x1) / f64::from(y3 - y1);
-    let mut ax = f64::from(x1);
-    let mut bx = f64::from(x1);
-    for y in y1..=y2 {
-        let a = ax as i32;
-        let b = bx as i32;
-        ax += slope1;
-        bx += slope2;
-        lines.push(Scanline {
-            y,
-            x1: a.min(b),
-            x2: a.max(b),
-        });
-    }
+/// A horizontal run of pixels on one row: columns `start..end` (`end` not
+/// included). Spans are always inside the image and never empty.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Span {
+    /// The row.
+    pub row: usize,
+    /// First column covered.
+    pub start: usize,
+    /// One past the last column covered.
+    pub end: usize,
 }
 
-/// Fills a triangle whose two upper vertices share a row (`a.1 == b.1`), from
-/// the bottom vertex `c` up to, but not including, that row. Leaving the
-/// shared row out means the two halves of a split triangle never overlap.
-fn fill_flat_top((x1, y1): Point, (x2, y2): Point, (x3, y3): Point, lines: &mut Vec<Scanline>) {
-    let slope1 = f64::from(x3 - x1) / f64::from(y3 - y1);
-    let slope2 = f64::from(x3 - x2) / f64::from(y3 - y2);
-    let mut ax = f64::from(x3);
-    let mut bx = f64::from(x3);
-    for y in ((y1 + 1)..=y3).rev() {
-        ax -= slope1;
-        bx -= slope2;
-        let a = ax as i32;
-        let b = bx as i32;
-        lines.push(Scanline {
-            y,
-            x1: a.min(b),
-            x2: a.max(b),
-        });
-    }
-}
+/// Replaces `spans` with the pixels the triangle covers, clipped to a
+/// `width × height` image.
+pub(crate) fn rasterize_triangle(
+    vertices: [Point; 3],
+    width: usize,
+    height: usize,
+    spans: &mut Vec<Span>,
+) {
+    spans.clear();
+    let [a, b, c] = vertices;
+    let top = a.y.min(b.y).min(c.y).max(0);
+    let bottom = a.y.max(b.y).max(c.y).min(height as i32);
+    let width = width as f64;
 
-/// Clips scanlines to a `width × height` image, dropping the ones that fall
-/// completely outside it.
-pub(crate) fn crop_scanlines(lines: &mut Vec<Scanline>, width: i32, height: i32) {
-    lines.retain_mut(|line| {
-        let off_image = line.y < 0 || line.y >= height || line.x1 >= width || line.x2 < 0;
-        if off_image {
-            return false;
+    for row in top..bottom {
+        let y = f64::from(row);
+        // A row strictly inside the triangle crosses exactly two of its
+        // edges (horizontal edges never count, see `crossing`).
+        let mut crossings = [(a, b), (b, c), (c, a)]
+            .into_iter()
+            .filter_map(|(from, to)| crossing(from, to, y));
+        let (Some(x1), Some(x2)) = (crossings.next(), crossings.next()) else {
+            continue;
+        };
+        // Pixels whose centre `x` satisfies `left <= x < right`, inside the
+        // image.
+        let start = x1.min(x2).ceil().clamp(0.0, width) as usize;
+        let end = x1.max(x2).ceil().clamp(0.0, width) as usize;
+        if start < end {
+            spans.push(Span {
+                row: row as usize,
+                start,
+                end,
+            });
         }
-        line.x1 = line.x1.clamp(0, width - 1);
-        line.x2 = line.x2.clamp(0, width - 1);
-        line.x1 <= line.x2
-    });
+    }
+}
+
+/// Where the edge from `from` to `to` crosses row `y`, if it does.
+///
+/// An edge covers the rows from its upper end (included) to its lower end
+/// (not included). So a horizontal edge covers no rows, and where two edges
+/// meet at a vertex, only one of them counts for that row.
+fn crossing(from: Point, to: Point, y: f64) -> Option<f64> {
+    let (upper, lower) = if from.y <= to.y {
+        (from, to)
+    } else {
+        (to, from)
+    };
+    let covers_row = f64::from(upper.y) <= y && y < f64::from(lower.y);
+    if !covers_row {
+        return None;
+    }
+    let fraction = (y - f64::from(upper.y)) / f64::from(lower.y - upper.y);
+    Some(f64::from(upper.x) + fraction * f64::from(lower.x - upper.x))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn pixel_count(lines: &[Scanline]) -> i64 {
-        lines.iter().map(|l| i64::from(l.x2 - l.x1 + 1)).sum()
+    fn rasterize(coords: [i32; 6], width: usize, height: usize) -> Vec<Span> {
+        let [x1, y1, x2, y2, x3, y3] = coords;
+        let vertices = [Point::new(x1, y1), Point::new(x2, y2), Point::new(x3, y3)];
+        let mut spans = Vec::new();
+        rasterize_triangle(vertices, width, height, &mut spans);
+        spans
     }
 
-    fn rasterize(points: [i32; 6], w: i32, h: i32) -> Vec<Scanline> {
-        let mut lines = Vec::new();
-        let [x1, y1, x2, y2, x3, y3] = points;
-        rasterize_triangle((x1, y1), (x2, y2), (x3, y3), &mut lines);
-        crop_scanlines(&mut lines, w, h);
-        lines
+    fn pixel_count(spans: &[Span]) -> usize {
+        spans.iter().map(|span| span.end - span.start).sum()
+    }
+
+    /// Checks every span is non-empty and inside a `width × height` image.
+    fn assert_inside(spans: &[Span], width: usize, height: usize) {
+        for span in spans {
+            assert!(span.row < height, "{span:?}");
+            assert!(span.start < span.end && span.end <= width, "{span:?}");
+        }
     }
 
     #[test]
@@ -135,61 +134,75 @@ mod tests {
         for t in triangles {
             let [x1, y1, x2, y2, x3, y3] = t.map(f64::from);
             let area = ((x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1)).abs() / 2.0;
-            let perimeter = ((x2 - x1).hypot(y2 - y1))
-                + ((x3 - x2).hypot(y3 - y2))
-                + ((x1 - x3).hypot(y1 - y3));
+            let perimeter =
+                (x2 - x1).hypot(y2 - y1) + (x3 - x2).hypot(y3 - y2) + (x1 - x3).hypot(y1 - y3);
             let count = pixel_count(&rasterize(t, 100, 100)) as f64;
-            // Edge pixels can go either way, so allow roughly one pixel per
-            // unit of perimeter.
+            // Pixel centres sample the area, so the count can only be off
+            // along the edges: allow half a pixel per unit of perimeter.
             assert!(
-                (count - area).abs() <= perimeter,
+                (count - area).abs() <= perimeter / 2.0,
                 "triangle {t:?}: {count} pixels for area {area}"
             );
         }
     }
 
     #[test]
-    fn rows_are_unique_and_sorted_within_each_half() {
-        let lines = rasterize([10, 10, 90, 40, 30, 90], 100, 100);
-        let mut rows: Vec<i32> = lines.iter().map(|l| l.y).collect();
-        rows.sort();
-        let before = rows.len();
-        rows.dedup();
-        assert_eq!(before, rows.len(), "a row was filled twice");
-        assert_eq!(rows.first(), Some(&10));
-        assert_eq!(rows.last(), Some(&90));
+    fn one_span_per_row_between_the_top_and_bottom_corners() {
+        let spans = rasterize([10, 10, 90, 40, 30, 90], 100, 100);
+        let rows: Vec<usize> = spans.iter().map(|span| span.row).collect();
+        // Row 10 holds only the top corner, a single point, which covers no
+        // pixel. Row 90 is the bottom edge, which the half-open rule leaves
+        // to whatever lies below.
+        let expected: Vec<usize> = (11..90).collect();
+        assert_eq!(rows, expected);
     }
 
     #[test]
-    fn off_image_triangle_crops_to_nothing() {
-        assert!(rasterize([-16, -16, -2, -10, -8, -1], 32, 32).is_empty());
-        assert!(rasterize([40, 5, 47, 10, 45, 20], 32, 32).is_empty());
-        assert!(rasterize([5, 40, 10, 47, 20, 45], 32, 32).is_empty());
-    }
-
-    /// Checks that every line lies inside a `size × size` image.
-    fn assert_inside(lines: &[Scanline], size: i32) {
-        for line in lines {
-            assert!((0..size).contains(&line.y));
-            assert!(0 <= line.x1 && line.x1 <= line.x2 && line.x2 < size);
+    fn triangles_sharing_an_edge_cover_each_pixel_once() {
+        // Two halves of a 20×20 square, split along the diagonal.
+        let mut coverage = [[0u8; 20]; 20];
+        for t in [[0, 0, 20, 0, 0, 20], [20, 0, 20, 20, 0, 20]] {
+            for span in rasterize(t, 20, 20) {
+                for cell in &mut coverage[span.row][span.start..span.end] {
+                    *cell += 1;
+                }
+            }
         }
+        assert!(coverage.iter().flatten().all(|&count| count == 1));
     }
 
     #[test]
-    fn partly_outside_triangle_stays_inside_the_image() {
-        let lines = rasterize([-10, -10, 45, 5, 10, 45], 32, 32);
-        assert!(!lines.is_empty());
-        assert_inside(&lines, 32);
+    fn off_image_triangle_covers_nothing() {
+        assert_eq!(rasterize([-16, -16, -2, -10, -8, -1], 32, 32), []);
+        assert_eq!(rasterize([40, 5, 47, 10, 45, 20], 32, 32), []);
+        assert_eq!(rasterize([5, 40, 10, 47, 20, 45], 32, 32), []);
     }
 
     #[test]
-    fn degenerate_triangles_stay_inside_the_image() {
+    fn partly_outside_triangle_is_clipped_to_the_image() {
+        let spans = rasterize([-10, -10, 45, 5, 10, 45], 32, 32);
+        assert_ne!(spans, []);
+        assert_inside(&spans, 32, 32);
+    }
+
+    #[test]
+    fn degenerate_triangles_cover_nothing() {
         for t in [
             [5, 5, 20, 20, 30, 30],
             [3, 7, 3, 7, 3, 7],
             [0, 4, 31, 4, 15, 4],
         ] {
-            assert_inside(&rasterize(t, 32, 32), 32);
+            assert_eq!(rasterize(t, 32, 32), [], "{t:?}");
         }
+    }
+
+    #[test]
+    fn spans_are_replaced_not_appended() {
+        let mut spans = Vec::new();
+        let big = [Point::new(0, 0), Point::new(30, 0), Point::new(0, 30)];
+        let small = [Point::new(0, 0), Point::new(4, 0), Point::new(0, 4)];
+        rasterize_triangle(big, 32, 32, &mut spans);
+        rasterize_triangle(small, 32, 32, &mut spans);
+        assert_eq!(spans.len(), 4);
     }
 }

@@ -1,23 +1,23 @@
 //! Small deterministic random number generator.
 //!
-//! primitive uses Go's `math/rand`. We don't need to reproduce its exact
-//! sequence, only to be deterministic, so this is Xoshiro256++ seeded through
-//! SplitMix64 (the seeding scheme its authors recommend), plus a Box–Muller
-//! normal distribution for the triangle mutations.
+//! `Xoshiro256++` seeded through `SplitMix64` (the seeding scheme its authors
+//! recommend), plus an approximately normal distribution for the triangle
+//! mutations. Everything is integer or exact IEEE-754 arithmetic, so the same
+//! seed gives the same numbers on every platform, native or WebAssembly.
 //!
 //! Every hill-climb search gets its own generator derived from
 //! `(seed, step, search)`. That is what makes the output identical no matter
 //! how many threads run the searches, or in which order they finish.
 
-/// Xoshiro256++ pseudo-random number generator.
+/// `Xoshiro256++` pseudo-random number generator.
 pub(crate) struct Rng {
     state: [u64; 4],
 }
 
-/// Advances a SplitMix64 state and returns the next output.
+/// Advances a `SplitMix64` state and returns the next output.
 ///
-/// SplitMix64 turns any 64-bit value (even 0) into well-mixed output, which is
-/// what Xoshiro needs for its initial state.
+/// `SplitMix64` turns any 64-bit value (even 0) into well-mixed output, which is
+/// what `Xoshiro` needs for its initial state.
 fn splitmix64(state: &mut u64) -> u64 {
     *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
     let mut z = *state;
@@ -26,7 +26,7 @@ fn splitmix64(state: &mut u64) -> u64 {
     z ^ (z >> 31)
 }
 
-/// One SplitMix64 output for `value`: a well-mixed 64-bit hash of it.
+/// One `SplitMix64` output for `value`: a well-mixed 64-bit hash of it.
 fn mix(value: u64) -> u64 {
     let mut state = value;
     splitmix64(&mut state)
@@ -89,14 +89,17 @@ impl Rng {
         (self.next_u64() >> 11) as f64 * SCALE
     }
 
-    /// Returns a sample from the standard normal distribution (mean 0, standard
-    /// deviation 1), like Go's `rand.NormFloat64`.
+    /// Returns an approximately normal sample: mean 0, standard deviation 1,
+    /// never further than 6 from 0.
     ///
-    /// Box–Muller transform. `u1` is taken from `(0, 1]` so `ln` never sees 0.
+    /// It's the sum of 12 uniform numbers minus 6 (the Irwin–Hall
+    /// distribution). Each uniform has variance 1/12, so twelve of them have
+    /// variance 1. Unlike the usual Box–Muller method, it needs no `ln` or
+    /// `cos`, whose results can differ between platforms' maths libraries.
+    /// The cut-off tails don't matter for mutation steps.
     pub(crate) fn normal(&mut self) -> f64 {
-        let u1 = 1.0 - self.next_f64();
-        let u2 = self.next_f64();
-        (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
+        let sum: f64 = (0..12).map(|_| self.next_f64()).sum();
+        sum - 6.0
     }
 }
 
@@ -156,5 +159,6 @@ mod tests {
         let variance = samples.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n as f64;
         assert!(mean.abs() < 0.05, "mean {mean}");
         assert!((variance - 1.0).abs() < 0.05, "variance {variance}");
+        assert!(samples.iter().all(|x| x.abs() <= 6.0));
     }
 }

@@ -319,7 +319,7 @@ fn real_photo_decodes_fits_the_budget_and_gets_close() {
     assert!(svg.len() <= 4000, "{} bytes", svg.len());
     assert!(svg.len() > 3800, "stopped early at {} bytes", svg.len());
 
-    // With no shapes the score is about 0.23 (just the average colour). A
+    // With no shapes the score is about 0.27 (just the average colour). A
     // healthy search gets well below that even with these small settings; a
     // regression that makes covers worse would show up here.
     let score = reported_score(&stderr(&output));
@@ -337,7 +337,7 @@ fn real_photo_decodes_fits_the_budget_and_gets_close() {
 }
 
 /// Highest acceptable score for the real-photo test. Measured runs with
-/// these settings score 0.074–0.078 across seeds (0.23 with no shapes), so
-/// this leaves room for seed and platform differences while still catching a
-/// search that has become noticeably worse.
-const SCORE_LIMIT: f64 = 0.09;
+/// these settings score 0.084–0.091 across seeds (0.27 with no shapes), so
+/// this leaves room for seed differences while still catching a search that
+/// has become noticeably worse.
+const SCORE_LIMIT: f64 = 0.105;

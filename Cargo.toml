@@ -15,6 +15,21 @@ rust-version = "1.99"
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]
+# The stricter `pedantic` group, minus the lints below. `priority = -1`
+# applies the group first, so the individual settings override it.
+pedantic = { level = "warn", priority = -1 }
+# Casts: pixel maths moves between u8 channels, i32 coordinates, usize
+# indexes and f64 constantly. Each `as` here converts a value that is already
+# clamped or known to be in range (validated, or clipped to the image);
+# `try_from(..).expect(..)` on every one would only hurt readability.
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+cast_lossless = "allow"
+# `push_str(&format!(..))` is kept on purpose: it reads more plainly than
+# `write!` into a String (see docs/DECISIONS.md).
+format_push_string = "allow"
 # Suppressions must say why: `#[expect(clippy::lint, reason = "...")]`.
 allow_attributes = "warn"
 allow_attributes_without_reason = "warn"

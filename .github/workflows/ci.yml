@@ -40,3 +40,32 @@ jobs:
       # which is the single-threaded path the WebAssembly build uses.
       - name: Run core tests without the parallel feature
         run: cargo test -p geometrize-core
+
+  wasm:
+    name: Core tests on WebAssembly
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The pinned toolchain from rust-toolchain.toml, plus the WebAssembly
+      # target with system access (WASI), which can run the test harness.
+      - name: Setup rust toolchain
+        run: |
+          rustup toolchain install
+          rustup target add wasm32-wasip1
+
+      - name: Install wasmtime
+        uses: bytecodealliance/actions/wasmtime/setup@v1
+
+      - name: Cache dependencies and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # Runs the core's tests compiled to WebAssembly, including the golden
+      # test, so "the same SVG on every platform" is actually checked. It also
+      # runs the 32-bit branch of the large-image test (`usize` is 32 bits).
+      - name: Run core tests on WebAssembly
+        run: cargo test -p geometrize-core --target wasm32-wasip1
+        env:
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime

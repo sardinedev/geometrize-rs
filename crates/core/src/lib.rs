@@ -1,8 +1,10 @@
 //! Approximate an image with semi-transparent triangles and export it as a
 //! compact SVG.
 //!
-//! This is a trimmed Rust port of [fogleman/primitive](https://github.com/fogleman/primitive).
-//! Each [`Model::step`] adds the one shape that most improves the picture:
+//! It follows the approach of [fogleman/primitive](https://github.com/fogleman/primitive),
+//! trimmed to triangles and SVG and written in idiomatic Rust (its maths is
+//! not a line-for-line copy of primitive's). Each [`Model::step`] adds the
+//! one shape that most improves the picture:
 //! many random candidates are tried, the best ones are refined by hill
 //! climbing, and the winner is alpha-blended onto the canvas in the colour
 //! that best matches the target underneath it.
@@ -31,7 +33,7 @@
 //!     ..Options::default()
 //! };
 //! let mut model = Model::new(&rgba, width, height, options)?;
-//! while let Some(step) = model.step() {
+//! for step in model.steps() {
 //!     println!("score {:.4}, {} bytes", step.score, step.bytes);
 //! }
 //!
@@ -44,10 +46,11 @@
 //! # Determinism
 //!
 //! The same input and [`Options`] (including [`Options::seed`]) always give a
-//! byte-identical SVG, with or without the `parallel` feature and whatever the
-//! thread count. Native and WebAssembly builds may still differ very
-//! occasionally, because `ln`, `cos` and `acos` come from different maths
-//! libraries on the two targets.
+//! byte-identical SVG: with or without the `parallel` feature, whatever the
+//! thread count, and on every platform, native or WebAssembly. The maths uses
+//! only integers and float operations that IEEE-754 defines exactly (`+ − × ÷`,
+//! `sqrt`, rounding), never maths-library functions like `ln` or `cos`, whose
+//! results can differ between platforms.
 //!
 //! # Features
 //!
@@ -64,7 +67,8 @@ mod shape;
 mod svg;
 
 pub use model::{Model, StepResult};
-pub use shape::{Shape, ShapeKind, Triangle};
+pub use raster::Point;
+pub use shape::{Shape, ShapeKind, Triangle, UnknownShapeKind};
 
 use std::fmt;
 
@@ -83,6 +87,7 @@ pub struct Rgba {
 
 impl Rgba {
     /// Creates a colour from its four channels.
+    #[must_use]
     pub const fn new(r: u8, g: u8, b: u8, a: u8) -> Rgba {
         Rgba { r, g, b, a }
     }
@@ -108,6 +113,7 @@ impl Limit {
     /// Builds a limit from an optional shape count and an optional byte size,
     /// the way a command line or a form provides them. Returns `None` when
     /// neither is given, so the caller can pick its own default.
+    #[must_use]
     pub fn from_parts(shapes: Option<u32>, bytes: Option<usize>) -> Option<Limit> {
         match (shapes, bytes) {
             (Some(shapes), Some(bytes)) => Some(Limit::Both { shapes, bytes }),
@@ -118,6 +124,7 @@ impl Limit {
     }
 
     /// The shape limit, if there is one.
+    #[must_use]
     pub fn max_shapes(self) -> Option<u32> {
         match self {
             Limit::Shapes(shapes) | Limit::Both { shapes, .. } => Some(shapes),
@@ -126,6 +133,7 @@ impl Limit {
     }
 
     /// The byte limit, if there is one.
+    #[must_use]
     pub fn max_bytes(self) -> Option<usize> {
         match self {
             Limit::Bytes(bytes) | Limit::Both { bytes, .. } => Some(bytes),

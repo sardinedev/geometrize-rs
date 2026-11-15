@@ -1,12 +1,12 @@
 //! The model: target image, picture so far, and the shapes added to it.
 //!
-//! Port of primitive's `model.go` (`NewModel`, `Step`, `Add`), without the
-//! `repeat` loop and the PNG/GIF output, and with a stop condition on SVG size.
+//! Based on primitive's `model.go`, without its `repeat` loop and PNG/GIF
+//! output, and with a stop condition on SVG size.
 
 use crate::pixels::{
-    Canvas, compute_color, difference_after_drawing, difference_full, draw_lines, score_from_total,
+    Canvas, compute_color, difference_after_drawing, difference_full, draw_spans, score_from_total,
 };
-use crate::raster::Scanline;
+use crate::raster::Span;
 use crate::search::{SearchContext, best_hill_climb};
 use crate::shape::Shape;
 use crate::svg::{self, Frame};
@@ -46,12 +46,12 @@ pub struct StepResult {
 /// Approximates a target image one shape at a time.
 #[derive(Clone)]
 pub struct Model {
-    /// The image being approximated (alpha forced to 255).
+    /// The image being approximated (RGB; its alpha was dropped).
     target: Canvas,
     /// The picture so far.
     current: Canvas,
-    /// Scratch scanlines for adding a shape.
-    lines: Vec<Scanline>,
+    /// Scratch spans for adding a shape.
+    spans: Vec<Span>,
     /// Total error between `target` and `current` (see
     /// [`crate::pixels::difference_full`]). Kept as an exact integer; the
     /// 0–1 score is derived from it.
@@ -90,7 +90,8 @@ impl Model {
     ///
     /// `rgba` holds 4 bytes per pixel, row by row, at the working size (the
     /// model doesn't resize). The alpha channel is ignored: the image is
-    /// treated as opaque.
+    /// treated as opaque, so blend any transparency onto a background first
+    /// (see [`Options::bg`]).
     ///
     /// # Errors
     /// Returns an [`Error`] if the image is empty or too large, the buffer
@@ -121,10 +122,7 @@ impl Model {
         // Integer rounding of `percent × 255 / 100` (50% → 128).
         let alpha = ((u32::from(opacity_percent) * 255 + 50) / 100) as u8;
 
-        let mut target = Canvas::from_rgba(w, h, rgba);
-        for pixel in &mut target.pixels {
-            pixel[3] = 255;
-        }
+        let target = Canvas::from_rgba(w, h, rgba);
 
         let background = options.bg.unwrap_or_else(|| average_color(&target));
         let background = Rgba {
@@ -148,7 +146,7 @@ impl Model {
         Ok(Model {
             target,
             current,
-            lines: Vec::new(),
+            spans: Vec::new(),
             total,
             background,
             opacity_percent,
@@ -220,9 +218,8 @@ impl Model {
         // next to thousands of evaluations per step, and it keeps adding a
         // shape self-contained. The debug assertion below checks that the
         // recomputed error matches the search's.
-        let (width, height) = self.target.size();
-        shape.rasterize(width, height, &mut self.lines);
-        let color = compute_color(&self.target, &self.current, &self.lines, self.alpha);
+        shape.rasterize(self.target.width, self.target.height, &mut self.spans);
+        let color = compute_color(&self.target, &self.current, &self.spans, self.alpha);
 
         // The first shape that doesn't fit ends the run, even though a smaller
         // shape found later might still fit. That's deliberate: by then less
@@ -237,8 +234,8 @@ impl Model {
         }
 
         self.total =
-            difference_after_drawing(&self.target, &self.current, self.total, color, &self.lines);
-        draw_lines(&mut self.current, color, &self.lines);
+            difference_after_drawing(&self.target, &self.current, self.total, color, &self.spans);
+        draw_spans(&mut self.current, color, &self.spans);
         // Recomputing the winner must agree exactly with what the search
         // measured, or shapes would be chosen on numbers that aren't real.
         debug_assert_eq!(
@@ -256,43 +253,69 @@ impl Model {
         })
     }
 
+    /// Adds shapes until a limit is reached (see [`Model::step`]), yielding
+    /// what each step added:
+    ///
+    /// ```
+    /// # use geometrize_core::{Limit, Model, Options};
+    /// # let rgba = [200u8, 40, 80, 255].repeat(16 * 16);
+    /// # let options = Options { limit: Limit::Shapes(3), candidates: 10, age: 2, climbs: 1, ..Options::default() };
+    /// let mut model = Model::new(&rgba, 16, 16, options)?;
+    /// for step in model.steps() {
+    ///     println!("score {:.4}, {} bytes", step.score, step.bytes);
+    /// }
+    /// # Ok::<(), geometrize_core::Error>(())
+    /// ```
+    pub fn steps(&mut self) -> impl Iterator<Item = StepResult> + '_ {
+        std::iter::from_fn(|| self.step())
+    }
+
     /// Current score: the root-mean-square difference between the target and
     /// the picture so far, from 0 (identical) to 1.
+    #[must_use]
     pub fn score(&self) -> f64 {
         score_from_total(self.total, &self.target)
     }
 
     /// The shapes added so far, oldest first, with their colours.
+    #[must_use]
     pub fn shapes(&self) -> &[(Shape, Rgba)] {
         &self.shapes
     }
 
     /// The background colour (always opaque).
+    #[must_use]
     pub fn background(&self) -> Rgba {
         self.background
     }
 
     /// Size in bytes of [`Model::svg`] right now.
+    #[must_use]
     pub fn bytes(&self) -> usize {
         self.bytes
     }
 
     /// Working image width in pixels.
+    #[must_use]
     pub fn width(&self) -> u32 {
         self.target.width as u32
     }
 
     /// Working image height in pixels.
+    #[must_use]
     pub fn height(&self) -> u32 {
         self.target.height as u32
     }
 
-    /// The picture so far as RGBA bytes at the working size.
-    pub fn pixels(&self) -> &[u8] {
-        self.current.as_rgba()
+    /// The picture so far as RGB bytes (3 per pixel, row by row) at the
+    /// working size.
+    #[must_use]
+    pub fn rgb(&self) -> &[u8] {
+        self.current.as_rgb()
     }
 
     /// The SVG at [`Options::out_width`].
+    #[must_use]
     pub fn svg(&self) -> String {
         self.svg_document(self.frame)
     }
@@ -300,6 +323,7 @@ impl Model {
     /// The SVG at a different output width (at least 1). The byte limit only
     /// applies to [`Model::svg`]; other widths can be a little larger or
     /// smaller.
+    #[must_use]
     pub fn svg_at(&self, out_width: u32) -> String {
         let frame = Frame::new(self.width(), self.height(), out_width);
         self.svg_document(frame)
@@ -349,11 +373,9 @@ impl fmt::Debug for Model {
 }
 
 /// The mean red, green and blue of the image, opaque.
-///
-/// Port of primitive's `AverageImageColor`.
 fn average_color(image: &Canvas) -> Rgba {
     let (mut r_sum, mut g_sum, mut b_sum) = (0u64, 0u64, 0u64);
-    for &[r, g, b, _] in &image.pixels {
+    for &[r, g, b] in &image.pixels {
         r_sum += u64::from(r);
         g_sum += u64::from(g);
         b_sum += u64::from(b);

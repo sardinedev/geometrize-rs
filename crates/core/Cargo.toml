@@ -15,10 +15,12 @@ parallel = ["dep:rayon"]
 [dependencies]
 rayon = { version = "1", optional = true }
 
-[dev-dependencies]
-divan = { version = "6.0.0", package = "codspeed-divan-compat" }
-# Only to decode the real photo in `fixtures/` for the benchmarks; the crate
+# Both are only for the benchmarks, so they're left out when testing on
+# WebAssembly: `codspeed` (behind divan) needs Unix-only crates. The crate
 # itself stays dependency-free.
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+divan = { version = "6.0.0", package = "codspeed-divan-compat" }
+# Decodes the real photo in `fixtures/` for the photo benchmarks.
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
 [[bench]]

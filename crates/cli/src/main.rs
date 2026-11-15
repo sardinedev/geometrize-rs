@@ -163,8 +163,9 @@ fn run(args: Args) -> Result<(), CliError> {
 
 /// Adds shapes until the model reaches a limit, reporting each one.
 fn add_shapes(model: &mut Model, progress: &mut Progress) {
-    while let Some(step) = model.step() {
-        progress.step(model.shapes().len(), &step);
+    // Each step adds exactly one shape, so the count is the step number.
+    for (index, step) in model.steps().enumerate() {
+        progress.step(index + 1, &step);
     }
 }
 
@@ -177,7 +178,7 @@ fn load_image(path: &Path, work_size: u32, background: Rgba) -> Result<RgbaImage
         source,
     };
     let mut decoder = ImageReader::open(path)
-        .and_then(|reader| reader.with_guessed_format())
+        .and_then(ImageReader::with_guessed_format)
         .map_err(|error| read_error(error.into()))?
         .into_decoder()
         .map_err(read_error)?;
@@ -233,8 +234,7 @@ fn flatten_onto(image: &mut RgbaImage, background: Rgba) {
 fn seed_from_clock() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as u64)
-        .unwrap_or(0)
+        .map_or(0, |elapsed| elapsed.as_millis() as u64)
 }
 
 /// Writes the SVG to its file or to stdout.

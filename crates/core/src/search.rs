@@ -1,7 +1,6 @@
 //! Finding the next shape: random search followed by hill climbing.
 //!
-//! Port of primitive's `worker.go` (`Energy`, `BestHillClimbState`,
-//! `BestRandomState`) and `optimize.go` (`HillClimb`). Each step runs
+//! Based on primitive's `worker.go` and `optimize.go`. Each step runs
 //! `climbs` independent searches. Each search takes the best of `candidates`
 //! random shapes, then improves it by mutation until `age` mutations in a row
 //! fail to help. The best result over all searches wins.
@@ -13,7 +12,7 @@
 
 use crate::Options;
 use crate::pixels::{Canvas, compute_color, difference_after_drawing};
-use crate::raster::Scanline;
+use crate::raster::Span;
 use crate::rng::Rng;
 use crate::shape::Shape;
 
@@ -38,13 +37,12 @@ impl SearchContext<'_> {
     /// The total error the picture would have if `shape` were added to it
     /// (lower is better).
     ///
-    /// Port of `Worker.Energy`. `lines` is scratch space for the shape's
-    /// scanlines, reused between candidates so the hot loop doesn't allocate.
-    fn energy(&self, shape: &Shape, lines: &mut Vec<Scanline>) -> u64 {
-        let (width, height) = self.target.size();
-        shape.rasterize(width, height, lines);
-        let color = compute_color(self.target, self.current, lines, self.alpha);
-        difference_after_drawing(self.target, self.current, self.total, color, lines)
+    /// `spans` is scratch space for the shape's pixels, reused between
+    /// candidates so the hot loop doesn't allocate.
+    fn energy(&self, shape: &Shape, spans: &mut Vec<Span>) -> u64 {
+        shape.rasterize(self.target.width, self.target.height, spans);
+        let color = compute_color(self.target, self.current, spans, self.alpha);
+        difference_after_drawing(self.target, self.current, self.total, color, spans)
     }
 
     /// A random shape of one of the configured kinds.
@@ -72,30 +70,25 @@ impl Candidate {
 }
 
 /// The best of `ctx.options.candidates` random shapes, with its energy.
-///
-/// Port of `BestRandomState`.
-fn best_random(ctx: &SearchContext, lines: &mut Vec<Scanline>, rng: &mut Rng) -> (Shape, u64) {
-    let mut best_shape = ctx.random_shape(rng);
-    let mut best_energy = ctx.energy(&best_shape, lines);
-    for _ in 1..ctx.options.candidates {
-        let shape = ctx.random_shape(rng);
-        let energy = ctx.energy(&shape, lines);
-        if energy < best_energy {
-            best_shape = shape;
-            best_energy = energy;
-        }
-    }
-    (best_shape, best_energy)
+/// On a tie, the first one found wins.
+fn best_random(ctx: &SearchContext, spans: &mut Vec<Span>, rng: &mut Rng) -> (Shape, u64) {
+    (0..ctx.options.candidates)
+        .map(|_| {
+            let shape = ctx.random_shape(rng);
+            (shape, ctx.energy(&shape, spans))
+        })
+        .min_by_key(|&(_, energy)| energy)
+        .expect("candidates is at least 1 (checked by Model::new)")
 }
 
 /// Improves `shape` by random mutations, keeping each one only if it lowers
 /// the energy, until `ctx.options.age` mutations in a row have failed.
 ///
-/// Port of `HillClimb`. Shapes are `Copy`, so undoing a mutation is just
-/// putting the previous value back.
+/// Shapes are `Copy`, so undoing a mutation is just putting the previous
+/// value back.
 fn hill_climb(
     ctx: &SearchContext,
-    lines: &mut Vec<Scanline>,
+    spans: &mut Vec<Span>,
     rng: &mut Rng,
     mut shape: Shape,
     mut energy: u64,
@@ -105,7 +98,7 @@ fn hill_climb(
     while age < ctx.options.age {
         let previous = shape;
         shape.mutate(width, height, rng);
-        let new_energy = ctx.energy(&shape, lines);
+        let new_energy = ctx.energy(&shape, spans);
         if new_energy < energy {
             energy = new_energy;
             age = 0;
@@ -118,10 +111,10 @@ fn hill_climb(
 }
 
 /// Runs search number `search`: random search, then hill climbing.
-fn run_search(ctx: &SearchContext, lines: &mut Vec<Scanline>, search: u32) -> Candidate {
+fn run_search(ctx: &SearchContext, spans: &mut Vec<Span>, search: u32) -> Candidate {
     let mut rng = Rng::for_search(ctx.options.seed, ctx.step, u64::from(search));
-    let (shape, energy) = best_random(ctx, lines, &mut rng);
-    let (shape, energy) = hill_climb(ctx, lines, &mut rng, shape, energy);
+    let (shape, energy) = best_random(ctx, spans, &mut rng);
+    let (shape, energy) = hill_climb(ctx, spans, &mut rng, shape, energy);
     Candidate {
         shape,
         energy,
@@ -131,9 +124,8 @@ fn run_search(ctx: &SearchContext, lines: &mut Vec<Scanline>, search: u32) -> Ca
 
 /// Runs `ctx.options.climbs` searches and returns the best result.
 ///
-/// Port of `BestHillClimbState` (spread over workers by `runWorkers` in
-/// primitive). With the `parallel` feature the searches run on rayon's thread
-/// pool; otherwise they run in a loop. Both give the same answer.
+/// With the `parallel` feature the searches run on rayon's thread pool;
+/// otherwise they run in a loop. Both give the same answer.
 pub(crate) fn best_hill_climb(ctx: &SearchContext) -> Candidate {
     let best = cfg_select! {
         feature = "parallel" => { run_searches_in_parallel(ctx) }
@@ -142,22 +134,22 @@ pub(crate) fn best_hill_climb(ctx: &SearchContext) -> Candidate {
     best.expect("climbs is at least 1 (checked by Model::new)")
 }
 
-/// Runs the searches on rayon's thread pool, each thread with its own
-/// scanline buffer.
+/// Runs the searches on rayon's thread pool, each thread with its own span
+/// buffer.
 #[cfg(feature = "parallel")]
 fn run_searches_in_parallel(ctx: &SearchContext) -> Option<Candidate> {
     use rayon::prelude::*;
     (0..ctx.options.climbs)
         .into_par_iter()
-        .map_init(Vec::new, |lines, search| run_search(ctx, lines, search))
+        .map_init(Vec::new, |spans, search| run_search(ctx, spans, search))
         .min_by_key(Candidate::rank)
 }
 
-/// Runs the searches one after another, sharing one scanline buffer.
+/// Runs the searches one after another, sharing one span buffer.
 #[cfg(not(feature = "parallel"))]
 fn run_searches_in_sequence(ctx: &SearchContext) -> Option<Candidate> {
-    let mut lines = Vec::new();
+    let mut spans = Vec::new();
     (0..ctx.options.climbs)
-        .map(|search| run_search(ctx, &mut lines, search))
+        .map(|search| run_search(ctx, &mut spans, search))
         .min_by_key(Candidate::rank)
 }

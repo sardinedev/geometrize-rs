@@ -141,10 +141,10 @@ where
                 max_shapes = Some(parse_value(&mut parser, "--shapes", parse_number)?);
             }
             Long("max-size") => {
-                max_bytes = Some(parse_value(&mut parser, "--max-size", parse_size)?)
+                max_bytes = Some(parse_value(&mut parser, "--max-size", parse_size)?);
             }
             Long("opacity") => {
-                options.opacity = parse_value(&mut parser, "--opacity", parse_number)?
+                options.opacity = parse_value(&mut parser, "--opacity", parse_number)?;
             }
             Long("shape") => shape_kinds.push(parse_value(&mut parser, "--shape", parse_shape)?),
             Long("width") => options.out_width = parse_value(&mut parser, "--width", parse_number)?,
@@ -259,12 +259,9 @@ pub fn parse_color(text: &str) -> Result<Rgba, String> {
     Ok(Rgba::new(r, g, b, 255))
 }
 
-/// Parses a shape name, listing the available ones if it's unknown.
+/// Parses a shape name. The core's error message lists the available ones.
 pub fn parse_shape(text: &str) -> Result<ShapeKind, String> {
-    ShapeKind::from_name(text).ok_or_else(|| {
-        let names: Vec<&str> = ShapeKind::ALL.iter().map(|kind| kind.name()).collect();
-        format!("unknown shape (available: {})", names.join(", "))
-    })
+    text.parse::<ShapeKind>().map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
