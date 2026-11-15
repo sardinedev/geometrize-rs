@@ -162,6 +162,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn kind_codes_are_stable() {
+        // The browser preview draws shapes by these codes: changing one
+        // breaks it, so a new kind must take the next free number.
+        assert_eq!(ShapeKind::Triangle as u8, 0);
+    }
+
+    #[test]
     fn names_round_trip() {
         for &kind in ShapeKind::ALL {
             assert_eq!(kind.to_string().parse::<ShapeKind>(), Ok(kind));

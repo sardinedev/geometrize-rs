@@ -42,15 +42,15 @@ use wasm_bindgen::prelude::*;
 /// (`-1` becomes 4294967295) instead of throwing: the page must keep its
 /// inputs in range.
 #[wasm_bindgen]
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy)]
 pub struct SessionOptions {
     /// Opacity of every shape, from 0.01 to 1. Default 0.5.
     pub opacity: f32,
     /// Stop after this many shapes. Default `undefined`.
     ///
     /// The two limits work as `-n` and `--max-size` do in the CLI: set either
-    /// or both (whichever is reached first). With neither set, the session
-    /// stops at 500 shapes.
+    /// or both (whichever is reached first). With neither set, the core's
+    /// default limit applies (500 shapes).
     #[wasm_bindgen(js_name = maxShapes)]
     pub max_shapes: Option<u32>,
     /// Keep the SVG at or under this many bytes. Default `undefined`; see
@@ -98,7 +98,7 @@ impl Default for SessionOptions {
 
 impl SessionOptions {
     /// The core [`Options`] these settings describe. With neither limit set,
-    /// the core's default limit (500 shapes) applies, as in the CLI.
+    /// the core's default limit applies, as in the CLI.
     fn to_options(self) -> Options {
         let defaults = Options::default();
         let limit = Limit::from_parts(self.max_shapes, self.max_bytes.map(|bytes| bytes as usize));
@@ -146,8 +146,8 @@ impl Session {
         height: u32,
         options: &SessionOptions,
     ) -> Result<Session, JsError> {
-        let model = Model::new(&rgba, width, height, options.to_options())
-            .map_err(|error| JsError::new(&error.to_string()))?;
+        // `?` turns the core's error into a `JsError` with the same message.
+        let model = Model::new(&rgba, width, height, options.to_options())?;
         Ok(Session { model })
     }
 
@@ -195,14 +195,6 @@ impl Session {
     pub fn svg(&self) -> String {
         self.model.svg()
     }
-
-    /// The SVG so far at another output width (at least 1). Only
-    /// [`Session::svg`] is guaranteed to stay within the byte limit.
-    #[wasm_bindgen(js_name = svgAt)]
-    #[must_use]
-    pub fn svg_at(&self, out_width: u32) -> String {
-        self.model.svg_at(out_width)
-    }
 }
 
 /// Packs a step's shape and colour into the flat array [`Session::step`]
@@ -224,7 +216,7 @@ fn encode_step(step: &StepResult) -> Vec<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geometrize_core::{Point, Rgba, ShapeKind, Triangle};
+    use geometrize_core::{Point, Rgba, Triangle};
 
     #[test]
     fn default_options_are_the_cores() {
@@ -233,22 +225,16 @@ mod tests {
 
     #[test]
     fn limits_combine_like_the_cli() {
-        let mut options = SessionOptions {
+        let both = SessionOptions {
             max_shapes: Some(10),
             max_bytes: Some(5_000),
             ..SessionOptions::new()
         };
-        let both = Limit::Both {
+        let expected = Limit::Both {
             shapes: 10,
             bytes: 5_000,
         };
-        assert_eq!(options.to_options().limit, both);
-
-        options.max_shapes = None;
-        assert_eq!(options.to_options().limit, Limit::Bytes(5_000));
-
-        options.max_bytes = None;
-        assert_eq!(options.to_options().limit, Options::default().limit);
+        assert_eq!(both.to_options().limit, expected);
 
         // Only a byte limit, as the page sets it: no hidden shape cap.
         let bytes_only = SessionOptions {
@@ -256,11 +242,6 @@ mod tests {
             ..SessionOptions::new()
         };
         assert_eq!(bytes_only.to_options().limit, Limit::Bytes(30_000));
-    }
-
-    #[test]
-    fn kind_codes_are_the_cores() {
-        assert_eq!(ShapeKind::Triangle as i32, 0);
     }
 
     #[test]

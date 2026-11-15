@@ -46,7 +46,7 @@ jobs:
         run: cargo test -p geometrize-wasm
 
   wasm:
-    name: Core tests on WebAssembly
+    name: "WebAssembly: core tests and binding lint"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

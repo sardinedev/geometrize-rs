@@ -45,7 +45,7 @@ Most entries also have a comment at the spot in the code, so a reader there sees
 - **`Model::rgb()` returns RGB, not RGBA.** It replaced the RGBA `pixels()`, which nothing called. The planned WASM preview draws each shape on the browser canvas instead of copying pixels. If a pixel copy is ever needed, add a `write_rgba(&mut [u8])` then.
 - **Width and height are `i32` for shape creation and mutation but `usize` for rasterising.** Shapes need signed coordinates (vertices can sit in the margin outside the image), while clipping and indexing need unsigned sizes. Unifying them would only move the casts around.
 - **No `Model::limit()` accessor.** The CLI copies the limit before building the model, and the WASM form already knows it.
-- **The working size (256) and the rule for shrinking stay in the CLI,** not in the core. The browser resamples differently anyway, so sharing them wouldn't make CLI and web output match. Revisit with the WASM crate.
+- **The working size (256) and the rule for shrinking stay in the CLI,** not in the core. The browser resamples differently anyway, so sharing them wouldn't make CLI and web output match. The WASM bindings take pixels that are already shrunk; revisit when the preview page (`web/`) has to shrink photos itself.
 - **No pinned `const` struct sizes, `#[cold]` paths, custom allocators, PGO or BOLT.** These are tools for much larger programs; nothing here has asked for them.
 
 **CLI (`crates/cli`)**

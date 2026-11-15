@@ -11,6 +11,9 @@ publish = false
 [lib]
 # `cdylib` is the `.wasm` module; `rlib` lets the unit tests run natively.
 crate-type = ["cdylib", "rlib"]
+# There are no Rust doctests (the crate docs' example is JavaScript), and
+# running rustdoc's test pass would link an unused native `cdylib`.
+doctest = false
 
 [dependencies]
 # Without the `parallel` feature: the browser build is single-threaded (see
