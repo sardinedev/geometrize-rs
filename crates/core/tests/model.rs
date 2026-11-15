@@ -389,9 +389,9 @@ fn write_preview_svg() {
 ///
 /// This fails on *any* change to the output, so it catches refactors that
 /// alter results by accident. It also checks that every platform produces the
-/// same bytes: CI runs it on Linux, and it was recorded on macOS. When a
-/// change to the output is intended, update `EXPECTED` in the same pull
-/// request and say why.
+/// same bytes: it was recorded on macOS, and CI runs it on Linux, both
+/// natively and as WebAssembly (`wasm32-wasip1`). When a change to the output
+/// is intended, update `EXPECTED` in the same pull request and say why.
 #[test]
 fn golden_output() {
     // `r##"…"##` because the SVG itself contains `"#`.

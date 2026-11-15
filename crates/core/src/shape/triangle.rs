@@ -24,37 +24,38 @@ const COS_MIN_ANGLE: f64 = 0.965_925_826_289_068_3;
 /// A triangle in working-image pixel coordinates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Triangle {
-    /// The three corners, in no particular order.
+    /// The three vertices, in no particular order.
     pub vertices: [Point; 3],
 }
 
 impl Triangle {
     /// Creates a small random triangle somewhere on a `width × height` image:
-    /// a random point plus two corners within 15 pixels of it, then one
+    /// a random point plus two vertices within 15 pixels of it, then one
     /// mutation (which also makes it valid).
     pub(crate) fn random(width: i32, height: i32, rng: &mut Rng) -> Triangle {
         let first = Point::new(
             rng.below(width as u32) as i32,
             rng.below(height as u32) as i32,
         );
-        let mut nearby = || {
-            let mut offset = || rng.below(31) as i32 - 15;
-            Point::new(first.x + offset(), first.y + offset())
-        };
+        let mut offset = || rng.below(31) as i32 - 15;
         let mut triangle = Triangle {
-            vertices: [first, nearby(), nearby()],
+            vertices: [
+                first,
+                Point::new(first.x + offset(), first.y + offset()),
+                Point::new(first.x + offset(), first.y + offset()),
+            ],
         };
         triangle.mutate(width, height, rng);
         triangle
     }
 
-    /// Moves one random corner by a normally distributed amount (clamped to
+    /// Moves one random vertex by a normally distributed amount (clamped to
     /// the image plus [`MARGIN`]), repeating until the triangle is valid.
     pub(crate) fn mutate(&mut self, width: i32, height: i32, rng: &mut Rng) {
         loop {
-            let corner = &mut self.vertices[rng.below(3) as usize];
-            corner.x = (corner.x + random_step(rng)).clamp(-MARGIN, width - 1 + MARGIN);
-            corner.y = (corner.y + random_step(rng)).clamp(-MARGIN, height - 1 + MARGIN);
+            let vertex = &mut self.vertices[rng.below(3) as usize];
+            vertex.x = (vertex.x + random_step(rng)).clamp(-MARGIN, width - 1 + MARGIN);
+            vertex.y = (vertex.y + random_step(rng)).clamp(-MARGIN, height - 1 + MARGIN);
             if self.is_valid() {
                 return;
             }
@@ -62,7 +63,7 @@ impl Triangle {
     }
 
     /// Whether every angle of the triangle is wider than 15°. Thin slivers,
-    /// straight lines and triangles with two corners in the same place are
+    /// straight lines and triangles with two vertices in the same place are
     /// all invalid.
     #[must_use]
     pub fn is_valid(&self) -> bool {
@@ -79,16 +80,12 @@ impl Triangle {
     /// Appends `<path {attrs} d="Mx1 y1 x2 y2 x3 y3z"/>` with each coordinate
     /// mapped to output units.
     pub(crate) fn write_svg(&self, out: &mut String, scale: f64, attrs: &str) {
-        let coordinates = self.vertices.map(|corner| {
-            [
-                svg::scale_coordinate(corner.x, scale),
-                svg::scale_coordinate(corner.y, scale),
-            ]
-        });
+        let [a, b, c] = self.vertices;
+        let coordinates = [a.x, a.y, b.x, b.y, c.x, c.y].map(|v| svg::scale_coordinate(v, scale));
         out.push_str("<path ");
         out.push_str(attrs);
         out.push_str(" d=\"M");
-        svg::push_numbers(out, coordinates.as_flattened());
+        svg::push_numbers(out, &coordinates);
         out.push_str("z\"/>");
     }
 }
@@ -99,7 +96,7 @@ fn random_step(rng: &mut Rng) -> i32 {
     (rng.normal() * MUTATION_STEP).round() as i32
 }
 
-/// Whether the angle at `corner`, between the edges to `a` and to `b`, is
+/// Whether the angle at `vertex`, between the edges to `a` and to `b`, is
 /// wider than 15°.
 ///
 /// The angle `θ` between two edges satisfies `cos θ = dot / (|ea|·|eb|)`, and
@@ -107,9 +104,9 @@ fn random_step(rng: &mut Rng) -> i32 {
 /// avoids dividing by zero: when an edge has no length, both sides are 0 and
 /// `0 < 0` is false, so the triangle is invalid. Only `×`, `+` and `sqrt` are
 /// used, which are exact under IEEE-754 on every platform (`acos` isn't).
-fn is_wide_angle(corner: Point, a: Point, b: Point) -> bool {
-    let (ax, ay) = (f64::from(a.x - corner.x), f64::from(a.y - corner.y));
-    let (bx, by) = (f64::from(b.x - corner.x), f64::from(b.y - corner.y));
+fn is_wide_angle(vertex: Point, a: Point, b: Point) -> bool {
+    let (ax, ay) = (f64::from(a.x - vertex.x), f64::from(a.y - vertex.y));
+    let (bx, by) = (f64::from(b.x - vertex.x), f64::from(b.y - vertex.y));
     let dot = ax * bx + ay * by;
     let lengths = (ax * ax + ay * ay).sqrt() * (bx * bx + by * by).sqrt();
     dot < COS_MIN_ANGLE * lengths
@@ -140,9 +137,9 @@ mod tests {
         for _ in 0..1000 {
             let t = Triangle::random(64, 48, &mut rng);
             assert!(t.is_valid(), "{t:?}");
-            for corner in t.vertices {
-                assert!((-MARGIN..64 + MARGIN).contains(&corner.x), "{t:?}");
-                assert!((-MARGIN..48 + MARGIN).contains(&corner.y), "{t:?}");
+            for vertex in t.vertices {
+                assert!((-MARGIN..64 + MARGIN).contains(&vertex.x), "{t:?}");
+                assert!((-MARGIN..48 + MARGIN).contains(&vertex.y), "{t:?}");
             }
         }
     }
@@ -177,7 +174,7 @@ mod tests {
         );
         assert!(
             !Triangle::from_coords([0, 0, 0, 0, 10, 4]).is_valid(),
-            "two corners together"
+            "two vertices together"
         );
     }
 

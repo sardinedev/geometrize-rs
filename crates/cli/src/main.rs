@@ -163,9 +163,8 @@ fn run(args: Args) -> Result<(), CliError> {
 
 /// Adds shapes until the model reaches a limit, reporting each one.
 fn add_shapes(model: &mut Model, progress: &mut Progress) {
-    // Each step adds exactly one shape, so the count is the step number.
-    for (index, step) in model.steps().enumerate() {
-        progress.step(index + 1, &step);
+    for step in model.steps() {
+        progress.step(&step);
     }
 }
 
@@ -290,25 +289,25 @@ impl Progress {
         }
     }
 
-    /// Reports that shape number `shapes` was added.
-    fn step(&mut self, shapes: usize, step: &StepResult) {
+    /// Reports the shape a step added.
+    fn step(&mut self, step: &StepResult) {
         if !self.enabled {
             return;
         }
-        let line = self.line(shapes, step);
+        let line = self.line(step);
         if self.live {
             // `\r` returns to the start of the line; `\x1b[K` clears what's
             // left of the previous, possibly longer, line.
             eprint!("\r{line}\x1b[K");
             self.line_open = true;
-        } else if shapes.is_multiple_of(Self::LOG_EVERY) {
+        } else if step.shapes.is_multiple_of(Self::LOG_EVERY) {
             eprintln!("{line}");
         }
     }
 
     /// One progress line: `shape 120/500  score 0.0712  12.3/30.0 KB  85 shapes/s`.
-    fn line(&self, shapes: usize, step: &StepResult) -> String {
-        let mut line = format!("shape {shapes}");
+    fn line(&self, step: &StepResult) -> String {
+        let mut line = format!("shape {}", step.shapes);
         if let Some(max) = self.limit.max_shapes() {
             line.push_str(&format!("/{max}"));
         }
@@ -320,7 +319,7 @@ impl Progress {
         if let Some(max) = self.limit.max_bytes() {
             line.push_str(&format!("/{:.1}", kilobytes(max)));
         }
-        let rate = shapes as f64 / seconds(self.started.elapsed());
+        let rate = step.shapes as f64 / seconds(self.started.elapsed());
         line.push_str(&format!(" KB  {rate:.0} shapes/s"));
         line
     }

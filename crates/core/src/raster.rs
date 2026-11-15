@@ -42,6 +42,13 @@ pub(crate) struct Span {
     pub end: usize,
 }
 
+impl Span {
+    /// Number of pixels covered.
+    pub(crate) fn len(&self) -> usize {
+        self.end - self.start
+    }
+}
+
 /// Replaces `spans` with the pixels the triangle covers, clipped to a
 /// `width × height` image.
 pub(crate) fn rasterize_triangle(
@@ -54,7 +61,7 @@ pub(crate) fn rasterize_triangle(
     let [a, b, c] = vertices;
     let top = a.y.min(b.y).min(c.y).max(0);
     let bottom = a.y.max(b.y).max(c.y).min(height as i32);
-    let width = width as f64;
+    let right_edge = width as f64;
 
     for row in top..bottom {
         let y = f64::from(row);
@@ -68,8 +75,8 @@ pub(crate) fn rasterize_triangle(
         };
         // Pixels whose centre `x` satisfies `left <= x < right`, inside the
         // image.
-        let start = x1.min(x2).ceil().clamp(0.0, width) as usize;
-        let end = x1.max(x2).ceil().clamp(0.0, width) as usize;
+        let start = x1.min(x2).ceil().clamp(0.0, right_edge) as usize;
+        let end = x1.max(x2).ceil().clamp(0.0, right_edge) as usize;
         if start < end {
             spans.push(Span {
                 row: row as usize,
@@ -112,7 +119,7 @@ mod tests {
     }
 
     fn pixel_count(spans: &[Span]) -> usize {
-        spans.iter().map(|span| span.end - span.start).sum()
+        spans.iter().map(Span::len).sum()
     }
 
     /// Checks every span is non-empty and inside a `width × height` image.
@@ -147,10 +154,10 @@ mod tests {
     }
 
     #[test]
-    fn one_span_per_row_between_the_top_and_bottom_corners() {
+    fn one_span_per_row_between_the_top_and_bottom_vertices() {
         let spans = rasterize([10, 10, 90, 40, 30, 90], 100, 100);
         let rows: Vec<usize> = spans.iter().map(|span| span.row).collect();
-        // Row 10 holds only the top corner, a single point, which covers no
+        // Row 10 holds only the top vertex, a single point, which covers no
         // pixel. Row 90 is the bottom edge, which the half-open rule leaves
         // to whatever lies below.
         let expected: Vec<usize> = (11..90).collect();

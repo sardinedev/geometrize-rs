@@ -41,6 +41,8 @@ pub struct StepResult {
     pub score: f64,
     /// Size of the SVG after adding it, in bytes.
     pub bytes: usize,
+    /// Number of shapes after adding it (this shape's 1-based number).
+    pub shapes: usize,
 }
 
 /// Approximates a target image one shape at a time.
@@ -250,6 +252,7 @@ impl Model {
             color,
             score: self.score(),
             bytes: self.bytes,
+            shapes: self.shapes.len(),
         })
     }
 

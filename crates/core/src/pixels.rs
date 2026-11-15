@@ -9,6 +9,8 @@
 //!
 //! Images are opaque, so canvases store RGB only.
 
+use std::ops::Range;
+
 use crate::Rgba;
 use crate::raster::Span;
 
@@ -69,29 +71,30 @@ impl Canvas {
 
     /// The pixels a span covers.
     pub(crate) fn span(&self, span: &Span) -> &[Pixel] {
-        self.check_span(span);
-        let row_start = span.row * self.width;
-        &self.pixels[row_start + span.start..row_start + span.end]
+        &self.pixels[self.span_range(span)]
     }
 
     /// The pixels a span covers, for changing them.
     pub(crate) fn span_mut(&mut self, span: &Span) -> &mut [Pixel] {
-        self.check_span(span);
-        let row_start = span.row * self.width;
-        &mut self.pixels[row_start + span.start..row_start + span.end]
+        let range = self.span_range(span);
+        &mut self.pixels[range]
     }
 
-    /// Checks, in debug builds, that a span lies inside one row of the canvas.
-    /// Slicing alone wouldn't catch a span that runs past the end of its row:
-    /// it would silently continue into the next row and corrupt the error
-    /// total. Rasterisers must never produce such a span (see `raster`).
-    fn check_span(&self, span: &Span) {
+    /// Where a span's pixels sit in `pixels`.
+    ///
+    /// Checks, in debug builds, that the span lies inside one row of the
+    /// canvas. Slicing alone wouldn't catch a span that runs past the end of
+    /// its row: it would silently continue into the next row and corrupt the
+    /// error total. Rasterisers must never produce such a span (see `raster`).
+    fn span_range(&self, span: &Span) -> Range<usize> {
         debug_assert!(
             span.row < self.height && span.start < span.end && span.end <= self.width,
             "{span:?} is outside the {}×{} canvas",
             self.width,
             self.height
         );
+        let row_start = span.row * self.width;
+        row_start + span.start..row_start + span.end
     }
 
     /// Number of colour values in the canvas (3 per pixel), the divisor for
@@ -114,15 +117,15 @@ impl Canvas {
 /// blending can reach asks for an impossible colour. If the spans cover no
 /// pixels the result is black.
 pub(crate) fn compute_color(target: &Canvas, current: &Canvas, spans: &[Span], alpha: u8) -> Rgba {
-    let mut target_sums = [0u64; 3];
-    let mut current_sums = [0u64; 3];
-    let mut count = 0u64;
+    let mut target_sums = [0i64; 3];
+    let mut current_sums = [0i64; 3];
+    let mut count = 0i64;
     for span in spans {
         for (&t, &c) in target.span(span).iter().zip(current.span(span)) {
             add_pixel(&mut target_sums, t);
             add_pixel(&mut current_sums, c);
         }
-        count += (span.end - span.start) as u64;
+        count += span.len() as i64;
     }
     if count == 0 {
         return Rgba::new(0, 0, 0, alpha);
@@ -133,9 +136,9 @@ pub(crate) fn compute_color(target: &Canvas, current: &Canvas, spans: &[Span], a
 }
 
 /// Adds each channel of `pixel` to `sums`.
-fn add_pixel(sums: &mut [u64; 3], pixel: Pixel) {
+fn add_pixel(sums: &mut [i64; 3], pixel: Pixel) {
     for (sum, value) in sums.iter_mut().zip(pixel) {
-        *sum += u64::from(value);
+        *sum += i64::from(value);
     }
 }
 
@@ -144,13 +147,12 @@ fn add_pixel(sums: &mut [u64; 3], pixel: Pixel) {
 ///
 /// With `α = alpha / 255`, the best value is
 /// `(Σcurrent·alpha + (Σtarget − Σcurrent)·255) / (count·alpha)`.
-/// The sums are at most `255 × 2³²` (the largest image), so everything fits
-/// in `i64`.
-fn best_channel(target_sum: u64, current_sum: u64, count: u64, alpha: u8) -> u8 {
+/// The sums are at most `255 × 2³²` (the largest image), so they fit in `i64`
+/// with room to spare.
+fn best_channel(target_sum: i64, current_sum: i64, count: i64, alpha: u8) -> u8 {
     let alpha = i64::from(alpha);
-    let (target_sum, current_sum) = (target_sum as i64, current_sum as i64);
     let numerator = current_sum * alpha + (target_sum - current_sum) * 255;
-    let denominator = count as i64 * alpha;
+    let denominator = count * alpha;
     // Round to the nearest whole number. `div_euclid` rounds down even when
     // the numerator is negative, so adding half the denominator first rounds
     // to nearest in both directions.
@@ -264,6 +266,7 @@ mod tests {
     use super::*;
     use crate::raster::{Point, rasterize_triangle};
     use crate::rng::Rng;
+    use crate::shape::Triangle;
 
     /// A canvas with a colourful but deterministic pattern.
     fn pattern(width: usize, height: usize) -> Canvas {
@@ -284,12 +287,8 @@ mod tests {
     /// out of the image like real candidates do.
     fn random_spans(rng: &mut Rng, size: usize, spans: &mut Vec<Span>) {
         let mut coord = || rng.below(size as u32 + 32) as i32 - 16;
-        let vertices = [
-            Point::new(coord(), coord()),
-            Point::new(coord(), coord()),
-            Point::new(coord(), coord()),
-        ];
-        rasterize_triangle(vertices, size, size, spans);
+        let coords = [coord(), coord(), coord(), coord(), coord(), coord()];
+        Triangle::from_coords(coords).rasterize(size, size, spans);
     }
 
     #[test]

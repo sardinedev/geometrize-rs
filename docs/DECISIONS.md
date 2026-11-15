@@ -1,6 +1,6 @@
 # Decisions
 
-Changes that were suggested (often by code review) and deliberately not made, with the reason and any measurements. **Don't redo these without new evidence**; if something here changes, update the entry instead of deleting it.
+Design decisions, with the reason and any measurements: changes that were suggested (often by code review) and deliberately not made, and larger changes that were made on purpose. **Don't redo these without new evidence**; if something here changes, update the entry instead of deleting it.
 
 Most entries also have a comment at the spot in the code, so a reader there sees the reason too.
 
@@ -12,7 +12,6 @@ Most entries also have a comment at the spot in the code, so a reader there sees
 | --- | --- | --- |
 | Apply the EXIF rotation *after* shrinking the photo (`crates/cli/src/main.rs`, `load_image`) | Saves ~85 ms and one full-size copy (~86 MB) on a 28.8 MP photo with EXIF orientation 6 | Changes the output for rotated photos: `thumbnail` samples pixels differently depending on orientation. Not worth an output change for 3–4% of one run. |
 | Set up each triangle edge once (slope per row) instead of dividing on every row in `raster::rasterize_triangle` | Mixed: −3% to +12% across benchmarks, within noise | No clear gain, and the precomputed slope rounds differently on some rows, which changed the Big Ben output. |
-| A ziggurat (table-based) normal distribution instead of summing 12 uniforms in `Rng::normal` | Not measured: `normal()` is a small part of a step next to rasterising and scoring | A lot of clever table code for a small gain. The sum of 12 uniforms is short, exact on every platform, and the search was already 15–35% faster after the rework. |
 | Spread the 16 searches of a step more evenly over 10 cores | ~72% CPU use (16.2 s user against 2.25 s wall × 10) | Needs a different `climbs` or work splitting inside a search, which changes the output or the determinism design. A tuning question only. |
 
 ## Done, and why
@@ -32,6 +31,7 @@ Most entries also have a comment at the spot in the code, so a reader there sees
 ## Decided to leave as is
 
 **Core (`crates/core`)**
+- **No ziggurat (table-based) normal distribution in `Rng::normal`.** Not measured: `normal()` is a small part of a step next to rasterising and scoring, and the sum of 12 uniforms is short and exact on every platform. A lot of clever table code for a small gain.
 - **The winner is recomputed in `Model::step`.** The search already knows the winning shape's colour and error, and its pixels get blended twice (once to predict, once to draw). It's one shape next to ~17,000 evaluations per step, and it keeps adding a shape self-contained. A `debug_assert_eq!` checks that both agree.
 - **The SVG writer builds temporary strings** (`format!`, `to_string`) and measures each shape by writing it. A whole 500-shape cover is written in well under a millisecond.
 - **A span buffer is allocated per search round** instead of being kept across steps: at most `climbs` small allocations per round.
@@ -43,7 +43,7 @@ Most entries also have a comment at the spot in the code, so a reader there sees
 - **`candidates`, `climbs` and `out_width` are not `NonZeroU32`.** Every caller would have to write `NonZeroU32::new(50).unwrap()`; `Error::Zero` does the same job.
 - **No separate `Opacity` type.** It would only wrap the two fields above.
 - **`Model::rgb()` returns RGB, not RGBA.** It replaced the RGBA `pixels()`, which nothing called. The planned WASM preview draws each shape on the browser canvas instead of copying pixels. If a pixel copy is ever needed, add a `write_rgba(&mut [u8])` then.
-- **Width and height are `i32` for shape creation and mutation but `usize` for rasterising.** Shapes need signed coordinates (corners can sit in the margin outside the image), while clipping and indexing need unsigned sizes. Unifying them would only move the casts around.
+- **Width and height are `i32` for shape creation and mutation but `usize` for rasterising.** Shapes need signed coordinates (vertices can sit in the margin outside the image), while clipping and indexing need unsigned sizes. Unifying them would only move the casts around.
 - **No `Model::limit()` accessor.** The CLI copies the limit before building the model, and the WASM form already knows it.
 - **The working size (256) and the rule for shrinking stay in the CLI,** not in the core. The browser resamples differently anyway, so sharing them wouldn't make CLI and web output match. Revisit with the WASM crate.
 - **No pinned `const` struct sizes, `#[cold]` paths, custom allocators, PGO or BOLT.** These are tools for much larger programs; nothing here has asked for them.

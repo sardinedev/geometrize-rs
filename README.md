@@ -104,8 +104,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ..Options::default()
     };
     let mut model = Model::new(photo.as_raw(), width, height, options)?;
-    for (index, step) in model.steps().enumerate() {
-        eprintln!("shape {} score {:.4} {} bytes", index + 1, step.score, step.bytes);
+    for step in model.steps() {
+        eprintln!("shape {} score {:.4} {} bytes", step.shapes, step.score, step.bytes);
     }
 
     std::fs::write("cover.svg", model.svg())?;
@@ -156,7 +156,7 @@ Each step adds the one triangle that most improves the picture:
 
 Every search has its own random generator, seeded from `(seed, step, search)`, and ties go to the lowest search number. That's why the thread count can't change the output.
 
-> The same seed also gives the same SVG on every platform, because no step uses a maths-library function (`ln`, `cos`, `acos`…) whose result could differ between them. A golden test pins the exact output of a small run, and CI checks it on Linux.
+> The same seed also gives the same SVG on every platform, because no step uses a maths-library function (`ln`, `cos`, `acos`…) whose result could differ between them. A golden test pins the exact output of a small run, and CI checks it both natively and on WebAssembly.
 
 ---
 
@@ -186,7 +186,7 @@ Every search has its own random generator, seeded from `(seed, step, search)`, a
 - per-search seeds, so threading can't change the result;
 - the compact `<path>` output;
 - exact integer error totals, so no rounding error builds up from step to step;
-- plain 8-bit colour maths and a pixel-centre rasteriser, in place of primitive's 16-bit premultiplied maths (from Go's `image` package) and floating-point scanlines. It's about 25–30% faster on the same search, and identical on every platform.
+- plain 8-bit colour maths and a pixel-centre rasteriser, in place of primitive's 16-bit premultiplied maths (from Go's `image` package) and float-stepped scanlines. It's faster on the same search (see [docs/DECISIONS.md](docs/DECISIONS.md)) and identical on every platform.
 
 ---
 
