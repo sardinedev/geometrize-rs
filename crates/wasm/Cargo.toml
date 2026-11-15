@@ -9,8 +9,11 @@ rust-version.workspace = true
 publish = false
 
 [lib]
-# `cdylib` is the `.wasm` module; `rlib` lets the unit tests run natively.
-crate-type = ["cdylib", "rlib"]
+# Only `cdylib`, the `.wasm` module. Adding `rlib` makes Cargo silently drop
+# the release profile's `lto = "fat"` for this crate (checked with
+# `cargo build -v`: the module came out 5% larger). The unit tests don't need
+# an `rlib`: `cargo test` builds them with `--test`.
+crate-type = ["cdylib"]
 # There are no Rust doctests (the crate docs' example is JavaScript), and
 # running rustdoc's test pass would link an unused native `cdylib`.
 doctest = false
